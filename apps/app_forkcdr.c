@@ -22,7 +22,7 @@
  * \author Anthony Minessale anthmct@yahoo.com
  *
  * \note Development of this app Sponsored/Funded by TAAN Softworks Corp
- * 
+ *
  * \ingroup applications
  */
 
@@ -31,8 +31,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
@@ -201,7 +199,7 @@ static int load_module(void)
 	int res = 0;
 
 	if (!router) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	res |= STASIS_MESSAGE_TYPE_INIT(forkcdr_message_type);
@@ -210,7 +208,9 @@ static int load_module(void)
 	                                 forkcdr_callback, NULL);
 
 	if (res) {
-		return AST_MODULE_LOAD_FAILURE;
+		unload_module();
+
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	return AST_MODULE_LOAD_SUCCESS;
 }

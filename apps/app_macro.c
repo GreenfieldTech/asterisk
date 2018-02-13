@@ -21,18 +21,17 @@
  * \brief Dial plan macro Implementation
  *
  * \author Mark Spencer <markster@digium.com>
- * 
+ *
  * \ingroup applications
  */
 
 /*** MODULEINFO
-	<support_level>core</support_level>
+	<defaultenabled>no</defaultenabled>
+	<support_level>deprecated</support_level>
 	<replacement>app_stack (GoSub)</replacement>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
@@ -252,10 +251,17 @@ static int _macro_exec(struct ast_channel *chan, const char *data, int exclusive
 	char *save_macro_offset;
 	int save_in_subroutine;
 	struct ast_datastore *macro_store = ast_channel_datastore_find(chan, &macro_ds_info, NULL);
+	static int deprecation_notice = 0;
 
 	if (ast_strlen_zero(data)) {
 		ast_log(LOG_WARNING, "Macro() requires arguments. See \"core show application macro\" for help.\n");
 		return -1;
+	}
+
+	if (!deprecation_notice) {
+		deprecation_notice = 1;
+		ast_log(LOG_WARNING, "Macro() is deprecated and will be removed from a future version of Asterisk.\n");
+		ast_log(LOG_WARNING, "Dialplan should be updated to use Gosub instead.\n");
 	}
 
 	do {
@@ -276,16 +282,16 @@ static int _macro_exec(struct ast_channel *chan, const char *data, int exclusive
 	if ((s = pbx_builtin_getvar_helper(chan, "MACRO_RECURSION"))) {
 		sscanf(s, "%30d", &maxdepth);
 	}
-	
+
 	/* Count how many levels deep the rabbit hole goes */
 	if ((s = pbx_builtin_getvar_helper(chan, "MACRO_DEPTH"))) {
 		sscanf(s, "%30d", &depth);
 	}
-	
+
 	/* Used for detecting whether to return when a Macro is called from another Macro after hangup */
 	if (strcmp(ast_channel_exten(chan), "h") == 0)
 		pbx_builtin_setvar_helper(chan, "MACRO_IN_HANGUP", "1");
-	
+
 	if ((inhangupc = pbx_builtin_getvar_helper(chan, "MACRO_IN_HANGUP"))) {
 		sscanf(inhangupc, "%30d", &inhangup);
 	}
@@ -373,7 +379,7 @@ static int _macro_exec(struct ast_channel *chan, const char *data, int exclusive
 	save_macro_priority = ast_strdup(pbx_builtin_getvar_helper(chan, "MACRO_PRIORITY"));
 	snprintf(pc, sizeof(pc), "%d", oldpriority);
 	pbx_builtin_setvar_helper(chan, "MACRO_PRIORITY", pc);
-  
+
 	save_macro_offset = ast_strdup(pbx_builtin_getvar_helper(chan, "MACRO_OFFSET"));
 	pbx_builtin_setvar_helper(chan, "MACRO_OFFSET", NULL);
 
@@ -614,7 +620,7 @@ static int macroexclusive_exec(struct ast_channel *chan, const char *data)
 	return _macro_exec(chan, data, 1);
 }
 
-static int macroif_exec(struct ast_channel *chan, const char *data) 
+static int macroif_exec(struct ast_channel *chan, const char *data)
 {
 	char *expr = NULL, *label_a = NULL, *label_b = NULL;
 	int res = 0;
@@ -630,14 +636,14 @@ static int macroif_exec(struct ast_channel *chan, const char *data)
 		}
 		if (pbx_checkcondition(expr))
 			res = macro_exec(chan, label_a);
-		else if (label_b) 
+		else if (label_b)
 			res = macro_exec(chan, label_b);
 	} else
 		ast_log(LOG_WARNING, "Invalid Syntax.\n");
 
 	return res;
 }
-			
+
 static int macro_exit_exec(struct ast_channel *chan, const char *data)
 {
 	return MACRO_EXIT_RESULT;
@@ -667,4 +673,4 @@ static int load_module(void)
 	return res;
 }
 
-AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Extension Macros");
+AST_MODULE_INFO_STANDARD_DEPRECATED(ASTERISK_GPL_KEY, "Extension Macros");

@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <curl/curl.h>
 
 #include "asterisk/module.h"
@@ -427,21 +425,21 @@ static int load_module(void)
 	if (ast_bucket_scheme_register("http", &http_bucket_wizard, &http_bucket_file_wizard,
 			NULL, NULL)) {
 		ast_log(LOG_ERROR, "Failed to register Bucket HTTP wizard scheme implementation\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (ast_bucket_scheme_register("https", &https_bucket_wizard, &https_bucket_file_wizard,
 			NULL, NULL)) {
 		ast_log(LOG_ERROR, "Failed to register Bucket HTTPS wizard scheme implementation\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
-AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "HTTP Media Cache Backend",
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "HTTP Media Cache Backend",
 		.support_level = AST_MODULE_SUPPORT_CORE,
 		.load = load_module,
 		.unload = unload_module,
-		.load_pri = AST_MODPRI_DEFAULT,
+		.requires = "res_curl",
 	);

@@ -16,7 +16,7 @@
  * at the top of the source tree.
  */
 
-/*! 
+/*!
  * \file
  * \brief Bluetooth Mobile Device channel driver
  *
@@ -41,8 +41,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <pthread.h>
 #include <signal.h>
@@ -1774,7 +1772,7 @@ static int rfcomm_read_command(int rsock, char **buf, size_t count, size_t *in_c
  * \verbatim
  * \r\n<result code>\r\n
  * <at command>\r
- * \r\n> 
+ * \r\n>
  * \endverbatim
  *
  * These formats correspond to AT result codes, AT commands, and the AT SMS
@@ -2256,7 +2254,7 @@ static int hfp_parse_cmti(struct hfp_pvt *hfp, char *buf)
 	int index = -1;
 
 	/* parse cmti info in the following format:
-	 * +CMTI: <mem>,<index> 
+	 * +CMTI: <mem>,<index>
 	 */
 	if (!sscanf(buf, "+CMTI: %*[^,],%d", &index)) {
 		ast_debug(2, "[%s] error parsing CMTI event '%s'\n", hfp->owner->id, buf);
@@ -3855,10 +3853,7 @@ static void *do_monitor_phone(void *data)
 		}
 
 		if ((at_msg = at_read_full(hfp->rsock, buf, sizeof(buf))) < 0) {
-			/* XXX gnu specific strerror_r is assummed here, this
-			 * is not really safe.  See the strerror(3) man page
-			 * for more info. */
-			ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, strerror_r(errno, buf, sizeof(buf)), errno);
+			ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, strerror(errno), errno);
 			break;
 		}
 
@@ -3995,7 +3990,7 @@ static void *do_monitor_phone(void *data)
 			ast_debug(1, "[%s] error parsing message\n", pvt->id);
 			goto e_cleanup;
 		case AT_READ_ERROR:
-			ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, strerror_r(errno, buf, sizeof(buf)), errno);
+			ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, strerror(errno), errno);
 			goto e_cleanup;
 		default:
 			break;
@@ -4073,11 +4068,7 @@ static void *do_monitor_headset(void *data)
 			continue;
 
 		if ((at_msg = at_read_full(pvt->rfcomm_socket, buf, sizeof(buf))) < 0) {
-			if (strerror_r(errno, buf, sizeof(buf)))
-				ast_debug(1, "[%s] error reading from device\n", pvt->id);
-			else
-				ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, buf, errno);
-
+			ast_debug(1, "[%s] error reading from device: %s (%d)\n", pvt->id, strerror(errno), errno);
 			goto e_cleanup;
 		}
 		ast_debug(1, "[%s] %s\n", pvt->id, buf);
@@ -4713,9 +4704,13 @@ static int load_module(void)
 	ast_format_cap_append(mbl_tech.capabilities, DEVICE_FRAME_FORMAT, 0);
 	/* Check if we have Bluetooth, no point loading otherwise... */
 	dev_id = hci_get_route(NULL);
+
 	s = hci_open_dev(dev_id);
 	if (dev_id < 0 || s < 0) {
 		ast_log(LOG_ERROR, "No Bluetooth devices found. Not loading module.\n");
+		ao2_ref(mbl_tech.capabilities, -1);
+		mbl_tech.capabilities = NULL;
+		hci_close_dev(s);
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
@@ -4723,6 +4718,8 @@ static int load_module(void)
 
 	if (mbl_load_config()) {
 		ast_log(LOG_ERROR, "Errors reading config file %s. Not loading module.\n", MBL_CONFIG);
+		ao2_ref(mbl_tech.capabilities, -1);
+		mbl_tech.capabilities = NULL;
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
@@ -4747,10 +4744,9 @@ static int load_module(void)
 	return AST_MODULE_LOAD_SUCCESS;
 
 e_cleanup:
-	if (sdp_session)
-		sdp_close(sdp_session);
+	unload_module();
 
-	return AST_MODULE_LOAD_FAILURE;
+	return AST_MODULE_LOAD_DECLINE;
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Bluetooth Mobile Device Channel Driver",

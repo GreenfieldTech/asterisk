@@ -30,6 +30,7 @@
 #include "asterisk/acl.h"
 #include "asterisk/utils.h"
 #include "include/res_pjsip_private.h"
+/* We're only using a #define from http_websocket.h, no OPTIONAL_API symbols are used. */
 #include "asterisk/http_websocket.h"
 
 #define MAX_POINTER_STRING 33
@@ -248,8 +249,11 @@ static int destroy_sip_transport_state(void *data)
 	ast_free(transport_state->id);
 	ast_free_ha(transport_state->localnet);
 
-	if (transport_state->external_address_refresher) {
-		ast_dnsmgr_release(transport_state->external_address_refresher);
+	if (transport_state->external_signaling_address_refresher) {
+		ast_dnsmgr_release(transport_state->external_signaling_address_refresher);
+	}
+	if (transport_state->external_media_address_refresher) {
+		ast_dnsmgr_release(transport_state->external_media_address_refresher);
 	}
 	if (transport_state->transport) {
 		pjsip_transport_shutdown(transport_state->transport);
@@ -286,15 +290,16 @@ static struct internal_state *find_internal_state_by_transport(const struct ast_
 static struct ast_sip_transport_state *find_state_by_transport(const struct ast_sip_transport *transport)
 {
 	struct internal_state *state;
+	struct ast_sip_transport_state *trans_state;
 
 	state = find_internal_state_by_transport(transport);
 	if (!state) {
 		return NULL;
 	}
-	ao2_bump(state->state);
-	ao2_cleanup(state);
+	trans_state = ao2_bump(state->state);
+	ao2_ref(state, -1);
 
-	return state->state;
+	return trans_state;
 }
 
 static int remove_temporary_state(void)
@@ -398,8 +403,8 @@ static void copy_state_to_transport(struct ast_sip_transport *transport)
 	memcpy(&transport->tls, &transport->state->tls, sizeof(transport->tls));
 	memcpy(&transport->ciphers, &transport->state->ciphers, sizeof(transport->ciphers));
 	transport->localnet = transport->state->localnet;
-	transport->external_address_refresher = transport->state->external_address_refresher;
-	memcpy(&transport->external_address, &transport->state->external_address, sizeof(transport->external_address));
+	transport->external_address_refresher = transport->state->external_signaling_address_refresher;
+	memcpy(&transport->external_address, &transport->state->external_signaling_address, sizeof(transport->external_signaling_address));
 }
 
 static int has_state_changed(struct ast_sip_transport_state *a, struct ast_sip_transport_state *b)
@@ -420,7 +425,11 @@ static int has_state_changed(struct ast_sip_transport_state *a, struct ast_sip_t
 		return -1;
 	}
 
-	if (ast_sockaddr_cmp(&a->external_address, &b->external_address)) {
+	if (ast_sockaddr_cmp(&a->external_signaling_address, &b->external_signaling_address)) {
+		return -1;
+	}
+
+	if (ast_sockaddr_cmp(&a->external_media_address, &b->external_media_address)) {
 		return -1;
 	}
 
@@ -514,20 +523,37 @@ static int transport_apply(const struct ast_sorcery *sorcery, void *obj)
 		pj_sockaddr_set_port(&temp_state->state->host, (transport->type == AST_TRANSPORT_TLS) ? 5061 : 5060);
 	}
 
-	/* Now that we know what address family we can set up a dnsmgr refresh for the external media address if present */
+	/* Now that we know what address family we can set up a dnsmgr refresh for the external addresses if present */
 	if (!ast_strlen_zero(transport->external_signaling_address)) {
 		if (temp_state->state->host.addr.sa_family == pj_AF_INET()) {
-			temp_state->state->external_address.ss.ss_family = AF_INET;
+			temp_state->state->external_signaling_address.ss.ss_family = AF_INET;
 		} else if (temp_state->state->host.addr.sa_family == pj_AF_INET6()) {
-			temp_state->state->external_address.ss.ss_family = AF_INET6;
+			temp_state->state->external_signaling_address.ss.ss_family = AF_INET6;
 		} else {
 			ast_log(LOG_ERROR, "Unknown address family for transport '%s', could not get external signaling address\n",
 					transport_id);
 			return -1;
 		}
 
-		if (ast_dnsmgr_lookup(transport->external_signaling_address, &temp_state->state->external_address, &temp_state->state->external_address_refresher, NULL) < 0) {
+		if (ast_dnsmgr_lookup(transport->external_signaling_address, &temp_state->state->external_signaling_address, &temp_state->state->external_signaling_address_refresher, NULL) < 0) {
 			ast_log(LOG_ERROR, "Could not create dnsmgr for external signaling address on '%s'\n", transport_id);
+			return -1;
+		}
+	}
+
+	if (!ast_strlen_zero(transport->external_media_address)) {
+		if (temp_state->state->host.addr.sa_family == pj_AF_INET()) {
+			temp_state->state->external_media_address.ss.ss_family = AF_INET;
+		} else if (temp_state->state->host.addr.sa_family == pj_AF_INET6()) {
+			temp_state->state->external_media_address.ss.ss_family = AF_INET6;
+		} else {
+			ast_log(LOG_ERROR, "Unknown address family for transport '%s', could not get external media address\n",
+					transport_id);
+			return -1;
+		}
+
+		if (ast_dnsmgr_lookup(transport->external_media_address, &temp_state->state->external_media_address, &temp_state->state->external_media_address_refresher, NULL) < 0) {
+			ast_log(LOG_ERROR, "Could not create dnsmgr for external media address on '%s'\n", transport_id);
 			return -1;
 		}
 	}
@@ -552,13 +578,20 @@ static int transport_apply(const struct ast_sorcery *sorcery, void *obj)
 			}
 		}
 
-		if (res == PJ_SUCCESS && (transport->tos || transport->cos)) {
-			pj_sock_t sock;
-			pj_qos_params qos_params;
-			sock = pjsip_udp_transport_get_socket(temp_state->state->transport);
-			pj_sock_get_qos_params(sock, &qos_params);
-			set_qos(transport, &qos_params);
-			pj_sock_set_qos_params(sock, &qos_params);
+		if (res == PJ_SUCCESS) {
+			temp_state->state->transport->info = pj_pool_alloc(temp_state->state->transport->pool,
+				(AST_SIP_X_AST_TXP_LEN + strlen(transport_id) + 2));
+
+			sprintf(temp_state->state->transport->info, "%s:%s", AST_SIP_X_AST_TXP, transport_id);
+
+			if (transport->tos || transport->cos) {
+				pj_sock_t sock;
+				pj_qos_params qos_params;
+				sock = pjsip_udp_transport_get_socket(temp_state->state->transport);
+				pj_sock_get_qos_params(sock, &qos_params);
+				set_qos(transport, &qos_params);
+				pj_sock_set_qos_params(sock, &qos_params);
+			}
 		}
 	} else if (transport->type == AST_TRANSPORT_TCP) {
 		pjsip_tcp_transport_cfg cfg;
@@ -586,6 +619,8 @@ static int transport_apply(const struct ast_sorcery *sorcery, void *obj)
 				&temp_state->state->factory);
 		}
 	} else if (transport->type == AST_TRANSPORT_TLS) {
+		static int option = 1;
+
 		if (transport->async_operations > 1 && ast_compare_versions(pj_get_version(), "2.5.0") < 0) {
 			ast_log(LOG_ERROR, "Transport: %s: When protocol=tls and pjproject version < 2.5.0, async_operations can't be > 1\n",
 					ast_sorcery_object_get_id(obj));
@@ -594,6 +629,13 @@ static int transport_apply(const struct ast_sorcery *sorcery, void *obj)
 
 		temp_state->state->tls.password = pj_str((char*)transport->password);
 		set_qos(transport, &temp_state->state->tls.qos_params);
+
+		/* sockopt_params.options is copied to each newly connected socket */
+		temp_state->state->tls.sockopt_params.options[0].level = pj_SOL_TCP();
+		temp_state->state->tls.sockopt_params.options[0].optname = pj_TCP_NODELAY();
+		temp_state->state->tls.sockopt_params.options[0].optval = &option;
+		temp_state->state->tls.sockopt_params.options[0].optlen = sizeof(option);
+		temp_state->state->tls.sockopt_params.cnt = 1;
 
 		for (i = 0; i < BIND_TRIES && res != PJ_SUCCESS; i++) {
 			if (perm_state && perm_state->state && perm_state->state->factory
@@ -649,6 +691,11 @@ static int transport_tls_file_handler(const struct aco_option *opt, struct ast_v
 
 	if (!state) {
 		return -1;
+	}
+
+	if (ast_strlen_zero(var->value)) {
+		/* Ignore empty options */
+		return 0;
 	}
 
 	if (!ast_file_is_readable(var->value)) {
@@ -880,6 +927,12 @@ static int transport_tls_method_handler(const struct aco_option *opt, struct ast
 		state->tls.method = PJSIP_SSL_UNSPECIFIED_METHOD;
 	} else if (!strcasecmp(var->value, "tlsv1")) {
 		state->tls.method = PJSIP_TLSV1_METHOD;
+#ifdef HAVE_PJSIP_TLS_TRANSPORT_PROTO
+	} else if (!strcasecmp(var->value, "tlsv1_1")) {
+		state->tls.method = PJSIP_TLSV1_1_METHOD;
+	} else if (!strcasecmp(var->value, "tlsv1_2")) {
+		state->tls.method = PJSIP_TLSV1_2_METHOD;
+#endif
 	} else if (!strcasecmp(var->value, "sslv2")) {
 		state->tls.method = PJSIP_SSLV2_METHOD;
 	} else if (!strcasecmp(var->value, "sslv3")) {
@@ -896,6 +949,10 @@ static int transport_tls_method_handler(const struct aco_option *opt, struct ast
 static const char *tls_method_map[] = {
 	[PJSIP_SSL_UNSPECIFIED_METHOD] = "unspecified",
 	[PJSIP_TLSV1_METHOD] = "tlsv1",
+#ifdef HAVE_PJSIP_TLS_TRANSPORT_PROTO
+	[PJSIP_TLSV1_1_METHOD] = "tlsv1_1",
+	[PJSIP_TLSV1_2_METHOD] = "tlsv1_2",
+#endif
 	[PJSIP_SSLV2_METHOD] = "sslv2",
 	[PJSIP_SSLV3_METHOD] = "sslv3",
 	[PJSIP_SSLV23_METHOD] = "sslv23",
@@ -1095,7 +1152,9 @@ static int transport_localnet_handler(const struct aco_option *opt, struct ast_v
 		return 0;
 	}
 
-	if (!(state->localnet = ast_append_ha("d", var->value, state->localnet, &error))) {
+	/* We use only the ast_apply_ha() which defaults to ALLOW
+	 * ("permit"), so we add DENY rules. */
+	if (!(state->localnet = ast_append_ha("deny", var->value, state->localnet, &error))) {
 		return -1;
 	}
 
@@ -1290,22 +1349,22 @@ static struct ast_sip_cli_formatter_entry *cli_formatter;
 
 struct ast_sip_transport_state *ast_sip_get_transport_state(const char *transport_id)
 {
-	struct internal_state * state = NULL;
+	struct internal_state *state = NULL;
+	struct ast_sip_transport_state *trans_state;
 
 	if (!transport_states) {
 		return NULL;
 	}
 
 	state = ao2_find(transport_states, transport_id, OBJ_SEARCH_KEY);
-	if (!state || !state->state) {
-		ao2_cleanup(state);
+	if (!state) {
 		return NULL;
 	}
 
-	ao2_ref(state->state, +1);
+	trans_state = ao2_bump(state->state);
 	ao2_ref(state, -1);
 
-	return state->state;
+	return trans_state;
 }
 
 static int populate_transport_states(void *obj, void *arg, int flags)
@@ -1340,7 +1399,7 @@ int ast_sip_initialize_sorcery_transport(void)
 	transport_states = ao2_container_alloc(DEFAULT_STATE_BUCKETS, internal_state_hash, internal_state_cmp);
 	if (!transport_states) {
 		ast_log(LOG_ERROR, "Unable to allocate transport states container\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return -1;
 	}
 
 	ast_sorcery_apply_default(sorcery, "transport", "config", "pjsip.conf,criteria=type=transport");
@@ -1375,8 +1434,9 @@ int ast_sip_initialize_sorcery_transport(void)
 	ast_sorcery_object_field_register(sorcery, "transport", "cos", "0", OPT_UINT_T, 0, FLDSET(struct ast_sip_transport, cos));
 	ast_sorcery_object_field_register(sorcery, "transport", "websocket_write_timeout", AST_DEFAULT_WEBSOCKET_WRITE_TIMEOUT_STR, OPT_INT_T, PARSE_IN_RANGE, FLDSET(struct ast_sip_transport, write_timeout), 1, INT_MAX);
 	ast_sorcery_object_field_register(sorcery, "transport", "allow_reload", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_transport, allow_reload));
+	ast_sorcery_object_field_register(sorcery, "transport", "symmetric_transport", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_transport, symmetric_transport));
 
-	internal_sip_register_endpoint_formatter(&endpoint_transport_formatter);
+	ast_sip_register_endpoint_formatter(&endpoint_transport_formatter);
 
 	cli_formatter = ao2_alloc(sizeof(struct ast_sip_cli_formatter_entry), NULL);
 	if (!cli_formatter) {
@@ -1406,7 +1466,7 @@ int ast_sip_destroy_sorcery_transport(void)
 	ast_cli_unregister_multiple(cli_commands, ARRAY_LEN(cli_commands));
 	ast_sip_unregister_cli_formatter(cli_formatter);
 
-	internal_sip_unregister_endpoint_formatter(&endpoint_transport_formatter);
+	ast_sip_unregister_endpoint_formatter(&endpoint_transport_formatter);
 
 	ao2_ref(transport_states, -1);
 	transport_states = NULL;

@@ -34,8 +34,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
@@ -56,8 +54,8 @@ ASTERISK_REGISTER_FILE()
 			<parameter name="result-id" required="true" />
 		</syntax>
 		<description>
-			<para>For queries which are marked as mode=multirow, the original 
-			query returns a <replaceable>result-id</replaceable> from which results 
+			<para>For queries which are marked as mode=multirow, the original
+			query returns a <replaceable>result-id</replaceable> from which results
 			may be fetched.  This function implements the actual fetch of the results.</para>
 			<para>This also sets <variable>ODBC_FETCH_STATUS</variable>.</para>
 			<variablelist>
@@ -80,7 +78,7 @@ ASTERISK_REGISTER_FILE()
 			<parameter name="result-id" required="true" />
 		</syntax>
 		<description>
-			<para>For queries which are marked as mode=multirow, this will clear 
+			<para>For queries which are marked as mode=multirow, this will clear
 			any remaining rows of the specified resultset.</para>
 		</description>
 	</application>
@@ -92,7 +90,7 @@ ASTERISK_REGISTER_FILE()
 			<parameter name="string" required="true" />
 		</syntax>
 		<description>
-			<para>Used in SQL templates to escape data which may contain single ticks 
+			<para>Used in SQL templates to escape data which may contain single ticks
 			<literal>'</literal> which are otherwise used to delimit data.</para>
 			<para>Example: SELECT foo FROM bar WHERE baz='${SQL_ESC(${ARG1})}'</para>
 		</description>
@@ -793,6 +791,7 @@ static int acf_odbc_read(struct ast_channel *chan, const char *cmd, char *s, cha
 		if (!(resultset = ast_calloc(1, sizeof(*resultset)))) {
 			pbx_builtin_setvar_helper(chan, "ODBCROWS", rowcount);
 			pbx_builtin_setvar_helper(chan, "ODBCSTATUS", status);
+			AST_RWLIST_UNLOCK(&queries);
 			ast_autoservice_stop(chan);
 			return -1;
 		}
@@ -809,6 +808,7 @@ static int acf_odbc_read(struct ast_channel *chan, const char *cmd, char *s, cha
 			if (!(resultset = ast_calloc(1, sizeof(*resultset)))) {
 				pbx_builtin_setvar_helper(chan, "ODBCROWS", rowcount);
 				pbx_builtin_setvar_helper(chan, "ODBCSTATUS", status);
+				AST_RWLIST_UNLOCK(&queries);
 				ast_autoservice_stop(chan);
 				return -1;
 			}
@@ -1419,7 +1419,8 @@ static char *cli_odbc_read(struct ast_cli_entry *e, int cmd, struct ast_cli_args
 			AST_RWLIST_UNLOCK(&queries);
 			return NULL;
 		} else if (a->pos == 4) {
-			return a->n == 0 ? ast_strdup("exec") : NULL;
+			static const char * const completions[] = { "exec", NULL };
+			return ast_cli_complete(a->word, completions, a->n);
 		} else {
 			return NULL;
 		}
@@ -1625,7 +1626,8 @@ static char *cli_odbc_write(struct ast_cli_entry *e, int cmd, struct ast_cli_arg
 			AST_RWLIST_UNLOCK(&queries);
 			return NULL;
 		} else if (a->pos == 5) {
-			return a->n == 0 ? ast_strdup("exec") : NULL;
+			static const char * const completions[] = { "exec", NULL };
+			return ast_cli_complete(a->word, completions, a->n);
 		} else {
 			return NULL;
 		}
@@ -1917,4 +1919,3 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "ODBC lookups",
 	.unload = unload_module,
 	.reload = reload,
 );
-

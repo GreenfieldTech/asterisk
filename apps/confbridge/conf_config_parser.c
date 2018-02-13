@@ -29,7 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
 #include "asterisk/logger.h"
 #include "asterisk/config.h"
 #include "asterisk/config_options.h"
@@ -145,72 +144,66 @@ ASTERISK_REGISTER_FILE()
 					</para></description>
 				</configOption>
 				<configOption name="dsp_silence_threshold">
-					<synopsis>The number of milliseconds of detected silence necessary to trigger silence detection</synopsis>
-					<description><para>
-					The time in milliseconds of sound falling within the what
-					the dsp has established as baseline silence before a user
-					is considered be silent.  This value affects several
-					operations and should not be changed unless the impact
-					on call quality is fully understood.</para>
-					<para>What this value affects internally:</para>
-					<para>
-						1. When talk detection AMI events are enabled, this value
+					<synopsis>The number of milliseconds of silence necessary to declare talking stopped.</synopsis>
+					<description>
+						<para>The time in milliseconds of sound falling below the
+						<replaceable>dsp_talking_threshold</replaceable> option when
+						a user is considered to stop talking.  This value affects several
+						operations and should not be changed unless the impact on call
+						quality is fully understood.
+						</para>
+						<para>What this value affects internally:
+						</para>
+						<para>1. When talk detection AMI events are enabled, this value
 						determines when the user has stopped talking after a
 						period of talking.  If this value is set too low
 						AMI events indicating the user has stopped talking
 						may get falsely sent out when the user briefly pauses
 						during mid sentence.
-					</para>
-					<para>
-						2. The <replaceable>drop_silence</replaceable> option depends on this value to
-						determine when the user's audio should begin to be
-						dropped from the conference bridge after the user
+						</para>
+						<para>2. The <replaceable>drop_silence</replaceable> option
+						depends on this value to determine when the user's audio should
+						begin to be dropped from the conference bridge after the user
 						stops talking.  If this value is set too low the user's
-						audio stream may sound choppy to the other participants.
-						This is caused by the user transitioning constantly from
-						silence to talking during mid sentence.
-					</para>
-					<para>
-						The best way to approach this option is to set it slightly above
-						the maximum amount of ms of silence a user may generate during
-						natural speech.
-					</para>
-					<para>By default this value is 2500ms. Valid values are 1 through 2^31.</para>
+						audio stream may sound choppy to the other participants.  This
+						is caused by the user transitioning constantly from silence to
+						talking during mid sentence.
+						</para>
+						<para>The best way to approach this option is to set it slightly
+						above the maximum amount of milliseconds of silence a user may
+						generate during natural speech.
+						</para>
+						<para>Valid values are 1 through 2^31.</para>
 					</description>
 				</configOption>
 				<configOption name="dsp_talking_threshold">
-					<synopsis>The number of milliseconds of detected non-silence necessary to triger talk detection</synopsis>
-					<description><para>
-						The time in milliseconds of sound above what the dsp has
-						established as base line silence for a user before a user
-						is considered to be talking.  This value affects several
-						operations and should not be changed unless the impact on
-						call quality is fully understood.</para>
-						<para>
-						What this value affects internally:
+					<synopsis>Average magnitude threshold to determine talking.</synopsis>
+					<description>
+						<para>The minimum average magnitude per sample in a frame
+						for the DSP to consider talking/noise present.  A value below
+						this level is considered silence.  This value affects several
+						operations and should not be changed unless the impact on call
+						quality is fully understood.
 						</para>
-						<para>
-						1. Audio is only mixed out of a user's incoming audio stream
-						if talking is detected.  If this value is set too
-						loose the user will hear themselves briefly each
-						time they begin talking until the dsp has time to
-						establish that they are in fact talking.
+						<para>What this value affects internally:
 						</para>
-						<para>
-						2. When talk detection AMI events are enabled, this value
+						<para>1. Audio is only mixed out of a user's incoming audio
+						stream if talking is detected.  If this value is set too
+						high the user will hear himself talking.
+						</para>
+						<para>2. When talk detection AMI events are enabled, this value
 						determines when talking has begun which results in
-						an AMI event to fire.  If this value is set too tight
+						an AMI event to fire.  If this value is set too low
 						AMI events may be falsely triggered by variants in
 						room noise.
 						</para>
-						<para>
-						3. The <replaceable>drop_silence</replaceable> option depends on this value to determine
-						when the user's audio should be mixed into the bridge
-						after periods of silence.  If this value is too loose
-						the beginning of a user's speech will get cut off as they
-						transition from silence to talking.
+						<para>3. The <replaceable>drop_silence</replaceable> option
+						depends on this value to determine when the user's audio should
+						be mixed into the bridge after periods of silence.  If this value
+						is too high the user's speech will get discarded as they will
+						be considered silent.
 						</para>
-						<para>By default this value is 160 ms. Valid values are 1 through 2^31</para>
+						<para>Valid values are 1 through 2^15.</para>
 					</description>
 				</configOption>
 				<configOption name="jitterbuffer">
@@ -282,6 +275,13 @@ ASTERISK_REGISTER_FILE()
 						be chosen.  Using a larger mixing interval comes at the cost of introducing
 						larger amounts of delay into the bridge.  Valid values here are 10, 20, 40,
 						or 80.
+					</para></description>
+				</configOption>
+				<configOption name="binaural_active">
+					<synopsis>If true binaural conferencing with stereo audio is active</synopsis>
+					<description><para>
+						Activates binaural mixing for a conference bridge.
+						Binaural features are disabled by default.
 					</para></description>
 				</configOption>
 				<configOption name="record_conference">
@@ -385,6 +385,10 @@ ASTERISK_REGISTER_FILE()
 								is the single source of video distribution among all participants. If
 								that user leaves, the marked user to join after them becomes the source.</para>
 							</enum>
+							<enum name="sfu">
+								<para>Selective Forwarding Unit - Sets multi-stream
+								operation for a multi-party video conference.</para>
+							</enum>
 						</enumlist>
 					</description>
 				</configOption>
@@ -399,7 +403,7 @@ ASTERISK_REGISTER_FILE()
 						regardless if this limit is reached or not.
 					</para></description>
 				</configOption>
-				<configOption name="^sound_">
+				<configOption name="sound_">
 					<synopsis>Override the various conference bridge sound files</synopsis>
 					<description><para>
 						All sounds in the conference are customizable using the bridge profile options below.
@@ -419,6 +423,8 @@ ASTERISK_REGISTER_FILE()
 							<enum name="sound_kicked"><para>The sound played to a user who has been kicked from the conference.</para></enum>
 							<enum name="sound_muted"><para>The sound played when the mute option it toggled on.</para></enum>
 							<enum name="sound_unmuted"><para>The sound played when the mute option it toggled off.</para></enum>
+							<enum name="sound_binaural_on"><para>The sound played when binaural auudio is turned on.</para></enum>
+							<enum name="sound_binaural_off"><para>The sound played when the binaural audio is turned off.</para></enum>
 							<enum name="sound_only_person"><para>The sound played when the user is the only person in the conference.</para></enum>
 							<enum name="sound_only_one"><para>The sound played to a user when there is only one other
 										person is in the conference.</para></enum>
@@ -441,6 +447,16 @@ ASTERISK_REGISTER_FILE()
 							<enum name="sound_error_menu"><para>The sound played when an invalid menu option is entered.</para></enum>
 						</enumlist>
 					</description>
+				</configOption>
+				<configOption name="video_update_discard" default="2000">
+					<synopsis>Sets the amount of time in milliseconds after sending a video update to discard subsequent video updates</synopsis>
+					<description><para>
+						Sets the amount of time in milliseconds after sending a video update request
+						that subsequent video updates should be discarded. This means that if we
+						send a video update we will discard any other video update requests until
+						after the configured amount of time has elapsed. This prevents flooding of
+						video update requests from clients.
+					</para></description>
 				</configOption>
 				<configOption name="template">
 					<synopsis>When using the CONFBRIDGE dialplan function, use a bridge profile as a template for creating a new temporary profile</synopsis>
@@ -505,6 +521,9 @@ ASTERISK_REGISTER_FILE()
 						<enum name="toggle_mute"><para>
 							Toggle turning on and off mute.  Mute will make the user silent
 							to everyone else, but the user will still be able to listen in.
+							</para></enum>
+						<enum name="toggle_binaural"><para>
+							Toggle turning on and off binaural audio processing.
 							</para></enum>
 						<enum name="no_op"><para>
 							This action does nothing (No Operation). Its only real purpose exists for
@@ -614,8 +633,8 @@ static void *bridge_profile_find(struct ao2_container *container, const char *ca
 static struct aco_type bridge_type = {
 	.type = ACO_ITEM,
 	.name = "bridge_profile",
-	.category_match = ACO_BLACKLIST,
-	.category = "^general$",
+	.category_match = ACO_BLACKLIST_EXACT,
+	.category = "general",
 	.matchfield = "type",
 	.matchvalue = "bridge",
 	.item_alloc = bridge_profile_alloc,
@@ -651,8 +670,8 @@ static void *user_profile_find(struct ao2_container *container, const char *cate
 static struct aco_type user_type = {
 	.type = ACO_ITEM,
 	.name  = "user_profile",
-	.category_match = ACO_BLACKLIST,
-	.category = "^general$",
+	.category_match = ACO_BLACKLIST_EXACT,
+	.category = "general",
 	.matchfield = "type",
 	.matchvalue = "user",
 	.item_alloc = user_profile_alloc,
@@ -682,8 +701,8 @@ static void *menu_find(struct ao2_container *container, const char *category)
 static struct aco_type menu_type = {
 	.type = ACO_ITEM,
 	.name = "menu",
-	.category_match = ACO_BLACKLIST,
-	.category = "^general$",
+	.category_match = ACO_BLACKLIST_EXACT,
+	.category = "general",
 	.matchfield = "type",
 	.matchvalue = "menu",
 	.item_alloc = menu_alloc,
@@ -700,8 +719,8 @@ static struct aco_type *user_types[] = ACO_TYPES(&user_type);
 static struct aco_type general_type = {
 	.type = ACO_GLOBAL,
 	.name = "global",
-	.category_match = ACO_WHITELIST,
-	.category = "^general$",
+	.category_match = ACO_WHITELIST_EXACT,
+	.category = "general",
 };
 
 static struct aco_file confbridge_conf = {
@@ -910,6 +929,10 @@ static int set_sound(const char *sound_name, const char *sound_file, struct brid
 		ast_string_field_set(sounds, muted, sound_file);
 	} else if (!strcasecmp(sound_name, "sound_unmuted")) {
 		ast_string_field_set(sounds, unmuted, sound_file);
+	} else if (!strcasecmp(sound_name, "sound_binaural_on")) {
+		ast_string_field_set(sounds, binauralon, sound_file);
+	} else if (!strcasecmp(sound_name, "sound_binaural_off")) {
+		ast_string_field_set(sounds, binauraloff, sound_file);
 	} else if (!strcasecmp(sound_name, "sound_there_are")) {
 		ast_string_field_set(sounds, thereare, sound_file);
 	} else if (!strcasecmp(sound_name, "sound_other_in_party")) {
@@ -1135,6 +1158,7 @@ static int add_action_to_menu_entry(struct conf_menu_entry *menu_entry, enum con
 	switch (id) {
 	case MENU_ACTION_NOOP:
 	case MENU_ACTION_TOGGLE_MUTE:
+	case MENU_ACTION_TOGGLE_BINAURAL:
 	case MENU_ACTION_INCREASE_LISTENING:
 	case MENU_ACTION_DECREASE_LISTENING:
 	case MENU_ACTION_INCREASE_TALKING:
@@ -1243,6 +1267,8 @@ static int add_menu_entry(struct conf_menu *menu, const char *dtmf, const char *
 		ast_copy_string(menu_entry->dtmf, dtmf, sizeof(menu_entry->dtmf));
 		if (!strcasecmp(action, "toggle_mute")) {
 			res |= add_action_to_menu_entry(menu_entry, MENU_ACTION_TOGGLE_MUTE, NULL);
+		} else if (!strcasecmp(action, "toggle_binaural")) {
+			res |= add_action_to_menu_entry(menu_entry, MENU_ACTION_TOGGLE_BINAURAL, NULL);
 		} else if (!strcasecmp(action, "no_op")) {
 			res |= add_action_to_menu_entry(menu_entry, MENU_ACTION_NOOP, NULL);
 		} else if (!strcasecmp(action, "increase_listening_volume")) {
@@ -1365,7 +1391,7 @@ static char *handle_cli_confbridge_show_user_profiles(struct ast_cli_entry *e, i
 	case CLI_INIT:
 		e->command = "confbridge show profile users";
 		e->usage =
-			"Usage confbridge show profile users\n";
+			"Usage: confbridge show profile users\n";
 		return NULL;
 	case CLI_GENERATE:
 		return NULL;
@@ -1395,7 +1421,7 @@ static char *handle_cli_confbridge_show_user_profile(struct ast_cli_entry *e, in
 	case CLI_INIT:
 		e->command = "confbridge show profile user";
 		e->usage =
-			"Usage confbridge show profile user [<profile name>]\n";
+			"Usage: confbridge show profile user [<profile name>]\n";
 		return NULL;
 	case CLI_GENERATE:
 		if (a->pos == 4) {
@@ -1447,7 +1473,7 @@ static char *handle_cli_confbridge_show_user_profile(struct ast_cli_entry *e, in
 		"enabled" : "disabled");
 	ast_cli(a->fd,"Silence Threshold:       %ums\n",
 		u_profile.silence_threshold);
-	ast_cli(a->fd,"Talking Threshold:       %ums\n",
+	ast_cli(a->fd,"Talking Threshold:       %u\n",
 		u_profile.talking_threshold);
 	ast_cli(a->fd,"Denoise:                 %s\n",
 		u_profile.flags & USER_OPT_DENOISE ?
@@ -1516,7 +1542,7 @@ static char *handle_cli_confbridge_show_bridge_profiles(struct ast_cli_entry *e,
 	case CLI_INIT:
 		e->command = "confbridge show profile bridges";
 		e->usage =
-			"Usage confbridge show profile bridges\n";
+			"Usage: confbridge show profile bridges\n";
 		return NULL;
 	case CLI_GENERATE:
 		return NULL;
@@ -1548,7 +1574,7 @@ static char *handle_cli_confbridge_show_bridge_profile(struct ast_cli_entry *e, 
 	case CLI_INIT:
 		e->command = "confbridge show profile bridge";
 		e->usage =
-			"Usage confbridge show profile bridge <profile name>\n";
+			"Usage: confbridge show profile bridge <profile name>\n";
 		return NULL;
 	case CLI_GENERATE:
 		if (a->pos == 4) {
@@ -1634,6 +1660,8 @@ static char *handle_cli_confbridge_show_bridge_profile(struct ast_cli_entry *e, 
 		break;
 	}
 
+	ast_cli(a->fd,"Video Update Discard: %u\n", b_profile.video_update_discard);
+
 	ast_cli(a->fd,"sound_only_person:    %s\n", conf_get_sound(CONF_SOUND_ONLY_PERSON, b_profile.sounds));
 	ast_cli(a->fd,"sound_only_one:       %s\n", conf_get_sound(CONF_SOUND_ONLY_ONE, b_profile.sounds));
 	ast_cli(a->fd,"sound_has_joined:     %s\n", conf_get_sound(CONF_SOUND_HAS_JOINED, b_profile.sounds));
@@ -1641,6 +1669,8 @@ static char *handle_cli_confbridge_show_bridge_profile(struct ast_cli_entry *e, 
 	ast_cli(a->fd,"sound_kicked:         %s\n", conf_get_sound(CONF_SOUND_KICKED, b_profile.sounds));
 	ast_cli(a->fd,"sound_muted:          %s\n", conf_get_sound(CONF_SOUND_MUTED, b_profile.sounds));
 	ast_cli(a->fd,"sound_unmuted:        %s\n", conf_get_sound(CONF_SOUND_UNMUTED, b_profile.sounds));
+	ast_cli(a->fd,"sound_binaural_on:    %s\n", conf_get_sound(CONF_SOUND_BINAURAL_ON, b_profile.sounds));
+	ast_cli(a->fd,"sound_binaural_off:   %s\n", conf_get_sound(CONF_SOUND_BINAURAL_OFF, b_profile.sounds));
 	ast_cli(a->fd,"sound_there_are:      %s\n", conf_get_sound(CONF_SOUND_THERE_ARE, b_profile.sounds));
 	ast_cli(a->fd,"sound_other_in_party: %s\n", conf_get_sound(CONF_SOUND_OTHER_IN_PARTY, b_profile.sounds));
 	ast_cli(a->fd,"sound_place_into_conference: %s\n", conf_get_sound(CONF_SOUND_PLACE_IN_CONF, b_profile.sounds));
@@ -1700,7 +1730,7 @@ static char *handle_cli_confbridge_show_menus(struct ast_cli_entry *e, int cmd, 
 	case CLI_INIT:
 		e->command = "confbridge show menus";
 		e->usage =
-			"Usage confbridge show profile menus\n";
+			"Usage: confbridge show profile menus\n";
 		return NULL;
 	case CLI_GENERATE:
 		return NULL;
@@ -1734,7 +1764,7 @@ static char *handle_cli_confbridge_show_menu(struct ast_cli_entry *e, int cmd, s
 	case CLI_INIT:
 		e->command = "confbridge show menu";
 		e->usage =
-			"Usage confbridge show menu [<menu name>]\n";
+			"Usage: confbridge show menu [<menu name>]\n";
 		return NULL;
 	case CLI_GENERATE:
 		if (a->pos == 3) {
@@ -1768,6 +1798,9 @@ static char *handle_cli_confbridge_show_menu(struct ast_cli_entry *e, int cmd, s
 			switch (menu_action->id) {
 			case MENU_ACTION_TOGGLE_MUTE:
 				ast_cli(a->fd, "toggle_mute");
+				break;
+			case MENU_ACTION_TOGGLE_BINAURAL:
+				ast_cli(a->fd, "toggle_binaural");
 				break;
 			case MENU_ACTION_NOOP:
 				ast_cli(a->fd, "no_op");
@@ -1929,25 +1962,36 @@ static int video_mode_handler(const struct aco_option *opt, struct ast_variable 
 		ast_set_flags_to(b_profile,
 			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED
 				| BRIDGE_OPT_VIDEO_SRC_LAST_MARKED
-				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER,
+				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER
+				| BRIDGE_OPT_VIDEO_SRC_SFU,
 			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED);
 	} else if (!strcasecmp(var->value, "last_marked")) {
 		ast_set_flags_to(b_profile,
 			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED
 				| BRIDGE_OPT_VIDEO_SRC_LAST_MARKED
-				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER,
+				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER
+				| BRIDGE_OPT_VIDEO_SRC_SFU,
 			BRIDGE_OPT_VIDEO_SRC_LAST_MARKED);
 	} else if (!strcasecmp(var->value, "follow_talker")) {
 		ast_set_flags_to(b_profile,
 			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED
 				| BRIDGE_OPT_VIDEO_SRC_LAST_MARKED
-				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER,
+				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER
+				| BRIDGE_OPT_VIDEO_SRC_SFU,
 			BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER);
 	} else if (!strcasecmp(var->value, "none")) {
 		ast_clear_flag(b_profile,
 			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED
 				| BRIDGE_OPT_VIDEO_SRC_LAST_MARKED
-				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER);
+				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER
+				| BRIDGE_OPT_VIDEO_SRC_SFU);
+	} else if (!strcasecmp(var->value, "sfu")) {
+		ast_set_flags_to(b_profile,
+			BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED
+				| BRIDGE_OPT_VIDEO_SRC_LAST_MARKED
+				| BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER
+				| BRIDGE_OPT_VIDEO_SRC_SFU,
+			BRIDGE_OPT_VIDEO_SRC_SFU);
 	} else {
 		return -1;
 	}
@@ -2054,7 +2098,7 @@ static int conf_menu_profile_copy(struct conf_menu *dst, struct conf_menu *src)
 static int menu_template_handler(const struct aco_option *opt, struct ast_variable *var, void *obj)
 {
 	struct conf_menu *dst_menu = obj;
-	struct confbridge_cfg *cfg = aco_pending_config(&cfg_info);
+	RAII_VAR(struct confbridge_cfg *, cfg, ao2_global_obj_ref(cfg_handle), ao2_cleanup);
 	RAII_VAR(struct conf_menu *, src_menu, NULL, ao2_cleanup);
 
 	if (!cfg) {
@@ -2089,6 +2133,7 @@ static int verify_default_profiles(void)
 	RAII_VAR(struct user_profile *, user_profile, NULL, ao2_cleanup);
 	RAII_VAR(struct bridge_profile *, bridge_profile, NULL, ao2_cleanup);
 	RAII_VAR(struct conf_menu *, menu_profile, NULL, ao2_cleanup);
+	/* We can only be called as a result of an aco_process_config so this is safe */
 	struct confbridge_cfg *cfg = aco_pending_config(&cfg_info);
 
 	if (!cfg) {
@@ -2172,6 +2217,7 @@ int conf_load_config(void)
 	aco_option_register(&cfg_info, "jitterbuffer", ACO_EXACT, bridge_types, "no", OPT_BOOLFLAG_T, 1, FLDSET(struct bridge_profile, flags), USER_OPT_JITTERBUFFER);
 	/* "auto" will fail to parse as a uint, but we use PARSE_DEFAULT to set the value to 0 in that case, which is the value that auto resolves to */
 	aco_option_register(&cfg_info, "internal_sample_rate", ACO_EXACT, bridge_types, "0", OPT_UINT_T, PARSE_DEFAULT, FLDSET(struct bridge_profile, internal_sample_rate), 0);
+	aco_option_register(&cfg_info, "binaural_active", ACO_EXACT, bridge_types, "no", OPT_BOOLFLAG_T, 1, FLDSET(struct bridge_profile, flags), BRIDGE_OPT_BINAURAL_ACTIVE);
 	aco_option_register_custom(&cfg_info, "mixing_interval", ACO_EXACT, bridge_types, "20", mix_interval_handler, 0);
 	aco_option_register(&cfg_info, "record_conference", ACO_EXACT, bridge_types, "no", OPT_BOOLFLAG_T, 1, FLDSET(struct bridge_profile, flags), BRIDGE_OPT_RECORD_CONFERENCE);
 	aco_option_register_custom(&cfg_info, "video_mode", ACO_EXACT, bridge_types, NULL, video_mode_handler, 0);
@@ -2183,12 +2229,14 @@ int conf_load_config(void)
 	aco_option_register(&cfg_info, "record_command", ACO_EXACT, bridge_types, NULL, OPT_CHAR_ARRAY_T, 0, CHARFLDSET(struct bridge_profile, rec_command));
 	aco_option_register(&cfg_info, "regcontext", ACO_EXACT, bridge_types, NULL, OPT_CHAR_ARRAY_T, 0, CHARFLDSET(struct bridge_profile, regcontext));
 	aco_option_register(&cfg_info, "language", ACO_EXACT, bridge_types, "en", OPT_CHAR_ARRAY_T, 0, CHARFLDSET(struct bridge_profile, language));
-	aco_option_register_custom(&cfg_info, "^sound_", ACO_REGEX, bridge_types, NULL, sound_option_handler, 0);
+	aco_option_register_custom(&cfg_info, "sound_", ACO_PREFIX, bridge_types, NULL, sound_option_handler, 0);
+	aco_option_register(&cfg_info, "video_update_discard", ACO_EXACT, bridge_types, "2000", OPT_UINT_T, 0, FLDSET(struct bridge_profile, video_update_discard));
 	/* This option should only be used with the CONFBRIDGE dialplan function */
 	aco_option_register_custom(&cfg_info, "template", ACO_EXACT, bridge_types, NULL, bridge_template_handler, 0);
 
 	/* Menu options */
 	aco_option_register(&cfg_info, "type", ACO_EXACT, menu_types, NULL, OPT_NOOP_T, 0, 0);
+	/* This option should only be used with the CONFBRIDGE dialplan function */
 	aco_option_register_custom(&cfg_info, "template", ACO_EXACT, menu_types, NULL, menu_template_handler, 0);
 	aco_option_register_custom(&cfg_info, "^[0-9A-D*#]+$", ACO_REGEX, menu_types, NULL, menu_option_handler, 0);
 

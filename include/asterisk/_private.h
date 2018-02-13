@@ -16,6 +16,7 @@
 #define _ASTERISK__PRIVATE_H
 
 int load_modules(unsigned int);		/*!< Provided by loader.c */
+int modules_shutdown(void);		/*!< Provided by loader.c */
 int load_pbx(void);			/*!< Provided by pbx.c */
 int load_pbx_builtins(void);	/*!< Provided by pbx_builtins.c */
 int load_pbx_functions_cli(void);	/*!< Provided by pbx_functions.c */
@@ -43,7 +44,6 @@ int ast_named_locks_init(void);		/*!< Provided by named_locks.c */
 int ast_file_init(void);		/*!< Provided by file.c */
 int ast_features_init(void);            /*!< Provided by features.c */
 void ast_autoservice_init(void);	/*!< Provided by autoservice.c */
-int ast_data_init(void);		/*!< Provided by data.c */
 int ast_http_init(void);		/*!< Provided by http.c */
 int ast_http_reload(void);		/*!< Provided by http.c */
 int ast_tps_init(void); 		/*!< Provided by taskprocessor.c */

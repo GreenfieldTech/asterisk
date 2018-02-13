@@ -31,8 +31,6 @@
 #include "asterisk/utils.h"
 #include "asterisk/autoconfig.h"
 
-ASTERISK_REGISTER_FILE()
-
 #if defined(HAVE_LIBXML2)
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -97,6 +95,9 @@ struct ast_xml_doc *ast_xml_open(char *filename)
 #else /* no HAVE_LIBXSLT */
 	ast_log(LOG_NOTICE, "XSLT support not found. XML documentation may be incomplete.\n");
 #endif /* HAVE_LIBXSLT */
+
+	/* Optimize for XPath */
+	xmlXPathOrderDocElems(doc);
 
 	return (struct ast_xml_doc *) doc;
 }
@@ -383,4 +384,3 @@ struct ast_xml_xpath_results *ast_xml_query(struct ast_xml_doc *doc, const char 
 }
 
 #endif /* defined(HAVE_LIBXML2) */
-

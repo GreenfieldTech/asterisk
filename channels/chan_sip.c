@@ -199,29 +199,33 @@
 	The session-timers parameter in sip.conf defines the mode of operation of SIP session-timers feature in
 	Asterisk. The Asterisk can be configured in one of the following three modes:
 
-	1. Accept :: In the "accept" mode, the Asterisk server honors session-timers requests
-		made by remote end-points. A remote end-point can request Asterisk to engage
-		session-timers by either sending it an INVITE request with a "Supported: timer"
-		header in it or by responding to Asterisk's INVITE with a 200 OK that contains
-		Session-Expires: header in it. In this mode, the Asterisk server does not
-		request session-timers from remote end-points. This is the default mode.
-	2. Originate :: In the "originate" mode, the Asterisk server requests the remote
-		end-points to activate session-timers in addition to honoring such requests
-		made by the remote end-pints. In order to get as much protection as possible
-		against hanging SIP channels due to network or end-point failures, Asterisk
-		resends periodic re-INVITEs even if a remote end-point does not support
-		the session-timers feature.
-	3. Refuse :: In the "refuse" mode, Asterisk acts as if it does not support session-
-		timers for inbound or outbound requests. If a remote end-point requests
-		session-timers in a dialog, then Asterisk ignores that request unless it's
-		noted as a requirement (Require: header), in which case the INVITE is
-		rejected with a 420 Bad Extension response.
+	1. Accept :: In the "accept" mode, the Asterisk server honors
+		session-timers requests made by remote end-points. A remote
+		end-point can request Asterisk to engage session-timers by either
+		sending it an INVITE request with a "Supported: timer" header in
+		it or by responding to Asterisk's INVITE with a 200 OK that
+		contains Session-Expires: header in it. In this mode, the Asterisk
+		server does not request session-timers from remote
+		end-points. This is the default mode.
+
+	2. Originate :: In the "originate" mode, the Asterisk server
+		requests the remote end-points to activate session-timers in
+		addition to honoring such requests made by the remote
+		end-points. In order to get as much protection as possible against
+		hanging SIP channels due to network or end-point failures,
+		Asterisk resends periodic re-INVITEs even if a remote end-point
+		does not support the session-timers feature.
+
+	3. Refuse :: In the "refuse" mode, Asterisk acts as if it does not
+		support session- timers for inbound or outbound requests. If a
+		remote end-point requests session-timers in a dialog, then
+		Asterisk ignores that request unless it's noted as a requirement
+		(Require: header), in which case the INVITE is rejected with a 420
+		Bad Extension response.
 
 */
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <signal.h>
 #include <regex.h>
@@ -259,7 +263,6 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/threadstorage.h"
 #include "asterisk/translate.h"
 #include "asterisk/ast_version.h"
-#include "asterisk/data.h"
 #include "asterisk/aoc.h"
 #include "asterisk/message.h"
 #include "sip/include/sip.h"
@@ -374,9 +377,53 @@ ASTERISK_REGISTER_FILE()
 			<para>Since there are several headers (such as Via) which can occur multiple
 			times, SIP_HEADER takes an optional second argument to specify which header with
 			that name to retrieve. Headers start at offset <literal>1</literal>.</para>
+			<para>This function does not access headers from the REFER message if the call
+			was transferred. To obtain the REFER headers, set the dialplan variable
+			<variable>GET_TRANSFERRER_DATA</variable> to the prefix of the headers of the
+			REFER message that you need to access; for example, <literal>X-</literal> to
+			get all headers starting with <literal>X-</literal>. The variable must be set
+			before a call to the application that starts the channel that may eventually
+			transfer back into the dialplan, and must be inherited by that channel, so prefix
+			it with the <literal>_</literal> or <literal>__</literal> when setting (or
+			set it in the pre-dial handler executed on the new channel). To get all headers
+			of the REFER message, set the value to <literal>*</literal>. Headers
+			are returned in the form of a dialplan hash TRANSFER_DATA, and can be accessed
+			with the functions <variable>HASHKEYS(TRANSFER_DATA)</variable> and, e. g.,
+			<variable>HASH(TRANSFER_DATA,X-That-Special-Header)</variable>.</para>
+			<para>Please also note that contents of the SDP (an attachment to the
+			SIP request) can't be accessed with this function.</para>
+		</description>
+		<see-also>
+			<ref type="function">SIP_HEADERS</ref>
+		</see-also>
+	</function>
+	<function name="SIP_HEADERS" language="en_US">
+		<synopsis>
+			Gets the list of SIP header names from an incoming INVITE message.
+		</synopsis>
+		<syntax>
+			<parameter name="prefix">
+				<para>If specified, only the headers matching the given prefix are returned.</para>
+			</parameter>
+		</syntax>
+		<description>
+			<para>Returns a comma-separated list of header names (without values) from the
+			INVITE message that originated the current channel. Multiple headers with the
+			same name are included in the list only once. The returned list can be iterated
+			over using the functions POP() and SIP_HEADER().</para>
+			<para>For example, <literal>${SIP_HEADERS(Co)}</literal> might return
+			<literal>Contact,Content-Length,Content-Type</literal>. As a practical example,
+			you may use <literal>${SIP_HEADERS(X-)}</literal> to enumerate optional extended
+			headers.</para>
+			<para>This function does not access headers from the incoming SIP REFER message;
+			see the documentation of the function SIP_HEADER for how to access them.</para>
 			<para>Please observe that contents of the SDP (an attachment to the
 			SIP request) can't be accessed with this function.</para>
 		</description>
+		<see-also>
+			<ref type="function">SIP_HEADER</ref>
+			<ref type="function">POP</ref>
+		</see-also>
 	</function>
 	<function name="SIPPEER" language="en_US">
 		<synopsis>
@@ -546,6 +593,9 @@ ASTERISK_REGISTER_FILE()
 				<para>At least one variable pair must be specified.
 				<replaceable>name</replaceable>=<replaceable>value</replaceable></para>
 			</parameter>
+			<parameter name="Call-ID" required="false">
+				<para>When specified, SIP notity will be sent as a part of an existing dialog.</para>
+			</parameter>
 		</syntax>
 		<description>
 			<para>Sends a SIP Notify event.</para>
@@ -608,6 +658,8 @@ ASTERISK_REGISTER_FILE()
 		</managerEventInstance>
 	</managerEvent>
  ***/
+
+static int log_level = -1;
 
 static int min_expiry = DEFAULT_MIN_EXPIRY;        /*!< Minimum accepted registration time */
 static int max_expiry = DEFAULT_MAX_EXPIRY;        /*!< Maximum accepted registration time */
@@ -1209,7 +1261,8 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 static int process_sdp_o(const char *o, struct sip_pvt *p);
 static int process_sdp_c(const char *c, struct ast_sockaddr *addr);
 static int process_sdp_a_sendonly(const char *a, int *sendonly);
-static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_instance *instance);
+static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_instance *instance, int rtcp_mux);
+static int process_sdp_a_rtcp_mux(const char *a, struct sip_pvt *p, int *requested);
 static int process_sdp_a_dtls(const char *a, struct sip_pvt *p, struct ast_rtp_instance *instance);
 static int process_sdp_a_audio(const char *a, struct sip_pvt *p, struct ast_rtp_codecs *newaudiortp, int *last_rtpmap_codec);
 static int process_sdp_a_video(const char *a, struct sip_pvt *p, struct ast_rtp_codecs *newvideortp, int *last_rtpmap_codec);
@@ -1776,7 +1829,7 @@ static void destroy_escs(void)
 {
 	int i;
 	for (i = 0; i < ARRAY_LEN(event_state_compositors); i++) {
-		ao2_cleanup(event_state_compositors[i].compositor);
+		ao2_replace(event_state_compositors[i].compositor, NULL);
 	}
 }
 
@@ -2079,7 +2132,7 @@ static int sip_cc_monitor_request_cc(struct ast_cc_monitor *monitor, int *availa
 static int construct_pidf_body(enum sip_cc_publish_state state, char *pidf_body, size_t size, const char *presentity)
 {
 	struct ast_str *body = ast_str_alloca(size);
-	char tuple_id[32];
+	char tuple_id[64];
 
 	generate_random_string(tuple_id, sizeof(tuple_id));
 
@@ -2508,7 +2561,7 @@ static void sip_threadinfo_destructor(void *obj)
 	struct sip_threadinfo *th = obj;
 	struct tcptls_packet *packet;
 
-	if (th->alert_pipe[1] > -1) {
+	if (th->alert_pipe[0] > -1) {
 		close(th->alert_pipe[0]);
 	}
 	if (th->alert_pipe[1] > -1) {
@@ -2543,7 +2596,7 @@ static struct sip_threadinfo *sip_threadinfo_create(struct ast_tcptls_session_in
 	}
 	ao2_t_ref(tcptls_session, +1, "tcptls_session ref for sip_threadinfo object");
 	th->tcptls_session = tcptls_session;
-	th->type = transport ? transport : (tcptls_session->ssl ? AST_TRANSPORT_TLS: AST_TRANSPORT_TCP);
+	th->type = transport ? transport : (ast_iostream_get_ssl(tcptls_session->stream) ? AST_TRANSPORT_TLS: AST_TRANSPORT_TCP);
 	ao2_t_link(threadt, th, "Adding new tcptls helper thread");
 	ao2_t_ref(th, -1, "Decrementing threadinfo ref from alloc, only table ref remains");
 	return th;
@@ -2566,8 +2619,7 @@ static int sip_tcptls_write(struct ast_tcptls_session_instance *tcptls_session, 
 
 	ao2_lock(tcptls_session);
 
-	if ((tcptls_session->fd == -1) ||
-		!(th = ao2_t_find(threadt, &tmp, OBJ_POINTER, "ao2_find, getting sip_threadinfo in tcp helper thread")) ||
+	if (!(th = ao2_t_find(threadt, &tmp, OBJ_POINTER, "ao2_find, getting sip_threadinfo in tcp helper thread")) ||
 		!(packet = ao2_alloc(sizeof(*packet), tcptls_packet_destructor)) ||
 		!(packet->data = ast_str_create(len))) {
 		goto tcptls_write_setup_error;
@@ -2880,7 +2932,7 @@ static int sip_tcptls_read(struct sip_request *req, struct ast_tcptls_session_in
 			} else {
 				timeout = -1;
 			}
-			res = ast_wait_for_input(tcptls_session->fd, timeout);
+			res = ast_wait_for_input(ast_iostream_get_fd(tcptls_session->stream), timeout);
 			if (res < 0) {
 				ast_debug(2, "SIP TCP/TLS server :: ast_wait_for_input returned %d\n", res);
 				return -1;
@@ -2889,7 +2941,7 @@ static int sip_tcptls_read(struct sip_request *req, struct ast_tcptls_session_in
 				return -1;
 			}
 
-			res = ast_tcptls_server_read(tcptls_session, readbuf, sizeof(readbuf) - 1);
+			res = ast_iostream_read(tcptls_session->stream, readbuf, sizeof(readbuf) - 1);
 			if (res < 0) {
 				if (errno == EAGAIN || errno == EINTR) {
 					continue;
@@ -2950,20 +3002,11 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 			goto cleanup;
 		}
 
-		if ((flags = fcntl(tcptls_session->fd, F_GETFL)) == -1) {
-			ast_log(LOG_ERROR, "error setting socket to non blocking mode, fcntl() failed: %s\n", strerror(errno));
+		ast_iostream_nonblock(tcptls_session->stream);
+		if (!(me = sip_threadinfo_create(tcptls_session, ast_iostream_get_ssl(tcptls_session->stream) ? AST_TRANSPORT_TLS : AST_TRANSPORT_TCP))) {
 			goto cleanup;
 		}
-
-		flags |= O_NONBLOCK;
-		if (fcntl(tcptls_session->fd, F_SETFL, flags) == -1) {
-			ast_log(LOG_ERROR, "error setting socket to non blocking mode, fcntl() failed: %s\n", strerror(errno));
-			goto cleanup;
-		}
-
-		if (!(me = sip_threadinfo_create(tcptls_session, tcptls_session->ssl ? AST_TRANSPORT_TLS : AST_TRANSPORT_TCP))) {
-			goto cleanup;
-		}
+		me->threadid = pthread_self();
 		ao2_t_ref(me, +1, "Adding threadinfo ref for tcp_helper_thread");
 	} else {
 		struct sip_threadinfo tmp = {
@@ -2971,23 +3014,27 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 		};
 
 		if ((!(ca = tcptls_session->parent)) ||
-			(!(me = ao2_t_find(threadt, &tmp, OBJ_POINTER, "ao2_find, getting sip_threadinfo in tcp helper thread"))) ||
-			(!(tcptls_session = ast_tcptls_client_start(tcptls_session)))) {
+			(!(me = ao2_t_find(threadt, &tmp, OBJ_POINTER, "ao2_find, getting sip_threadinfo in tcp helper thread")))) {
+			goto cleanup;
+		}
+
+		me->threadid = pthread_self();
+
+		if (!(tcptls_session = ast_tcptls_client_start(tcptls_session))) {
 			goto cleanup;
 		}
 	}
 
 	flags = 1;
-	if (setsockopt(tcptls_session->fd, SOL_SOCKET, SO_KEEPALIVE, &flags, sizeof(flags))) {
+	if (setsockopt(ast_iostream_get_fd(tcptls_session->stream), SOL_SOCKET, SO_KEEPALIVE, &flags, sizeof(flags))) {
 		ast_log(LOG_ERROR, "error enabling TCP keep-alives on sip socket: %s\n", strerror(errno));
 		goto cleanup;
 	}
 
-	me->threadid = pthread_self();
-	ast_debug(2, "Starting thread for %s server\n", tcptls_session->ssl ? "TLS" : "TCP");
+	ast_debug(2, "Starting thread for %s server\n", ast_iostream_get_ssl(tcptls_session->stream) ? "TLS" : "TCP");
 
 	/* set up pollfd to watch for reads on both the socket and the alert_pipe */
-	fds[0].fd = tcptls_session->fd;
+	fds[0].fd = ast_iostream_get_fd(tcptls_session->stream);
 	fds[1].fd = me->alert_pipe[0];
 	fds[0].events = fds[1].events = POLLIN | POLLPRI;
 
@@ -3007,9 +3054,9 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 	 * We cannot let the stream exclusively wait for data to arrive.
 	 * We have to wake up the task to send outgoing messages.
 	 */
-	ast_tcptls_stream_set_exclusive_input(tcptls_session->stream_cookie, 0);
+	ast_iostream_set_exclusive_input(tcptls_session->stream, 0);
 
-	ast_tcptls_stream_set_timeout_sequence(tcptls_session->stream_cookie, ast_tvnow(),
+	ast_iostream_set_timeout_sequence(tcptls_session->stream, ast_tvnow(),
 		tcptls_session->client ? -1 : (authtimeout * 1000));
 
 	for (;;) {
@@ -3017,7 +3064,7 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 
 		if (!tcptls_session->client && req.authenticated && !authenticated) {
 			authenticated = 1;
-			ast_tcptls_stream_set_timeout_disable(tcptls_session->stream_cookie);
+			ast_iostream_set_timeout_disable(tcptls_session->stream);
 			ast_atomic_fetchadd_int(&unauth_sessions, -1);
 		}
 
@@ -3028,7 +3075,7 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 			}
 
 			if (timeout == 0) {
-				ast_debug(2, "SIP %s server timed out\n", tcptls_session->ssl ? "TLS": "TCP");
+				ast_debug(2, "SIP %s server timed out\n", ast_iostream_get_ssl(tcptls_session->stream) ? "TLS": "TCP");
 				goto cleanup;
 			}
 		} else {
@@ -3038,11 +3085,11 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 		if (ast_str_strlen(tcptls_session->overflow_buf) == 0) {
 			res = ast_poll(fds, 2, timeout); /* polls for both socket and alert_pipe */
 			if (res < 0) {
-				ast_debug(2, "SIP %s server :: ast_wait_for_input returned %d\n", tcptls_session->ssl ? "TLS": "TCP", res);
+				ast_debug(2, "SIP %s server :: ast_wait_for_input returned %d\n", ast_iostream_get_ssl(tcptls_session->stream) ? "TLS": "TCP", res);
 				goto cleanup;
 			} else if (res == 0) {
 				/* timeout */
-				ast_debug(2, "SIP %s server timed out\n", tcptls_session->ssl ? "TLS": "TCP");
+				ast_debug(2, "SIP %s server timed out\n", ast_iostream_get_ssl(tcptls_session->stream) ? "TLS": "TCP");
 				goto cleanup;
 			}
 		}
@@ -3067,14 +3114,14 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 
 			memset(buf, 0, sizeof(buf));
 
-			if (tcptls_session->ssl) {
+			if (ast_iostream_get_ssl(tcptls_session->stream)) {
 				set_socket_transport(&req.socket, AST_TRANSPORT_TLS);
 				req.socket.port = htons(ourport_tls);
 			} else {
 				set_socket_transport(&req.socket, AST_TRANSPORT_TCP);
 				req.socket.port = htons(ourport_tcp);
 			}
-			req.socket.fd = tcptls_session->fd;
+			req.socket.fd = ast_iostream_get_fd(tcptls_session->stream);
 
 			res = sip_tcptls_read(&req, tcptls_session, authenticated, start);
 			if (res < 0) {
@@ -3108,7 +3155,7 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 				ao2_unlock(me);
 
 				if (packet) {
-					if (ast_tcptls_server_write(tcptls_session, ast_str_buffer(packet->data), packet->len) == -1) {
+					if (ast_iostream_write(tcptls_session->stream, ast_str_buffer(packet->data), packet->len) == -1) {
 						ast_log(LOG_WARNING, "Failure to write to tcp/tls socket\n");
 					}
 					ao2_t_ref(packet, -1, "tcptls packet sent, this is no longer needed");
@@ -3120,7 +3167,7 @@ static void *_sip_tcp_helper_thread(struct ast_tcptls_session_instance *tcptls_s
 		}
 	}
 
-	ast_debug(2, "Shutting down thread for %s server\n", tcptls_session->ssl ? "TLS" : "TCP");
+	ast_debug(2, "Shutting down thread for %s server\n", ast_iostream_get_ssl(tcptls_session->stream) ? "TLS" : "TCP");
 
 cleanup:
 	if (tcptls_session && !tcptls_session->client && !authenticated) {
@@ -3844,7 +3891,7 @@ static void ast_sip_ouraddrfor(const struct ast_sockaddr *them, struct ast_socka
 	    (!sip_cfg.matchexternaddrlocally || !ast_apply_ha(localaddr, us)) ) {
 		/* if we used externhost, see if it is time to refresh the info */
 		if (externexpire && time(NULL) >= externexpire) {
-			if (ast_sockaddr_resolve_first(&externaddr, externhost, 0)) {
+			if (ast_sockaddr_resolve_first_af(&externaddr, externhost, 0, AST_AF_INET)) {
 				ast_log(LOG_NOTICE, "Warning: Re-lookup of '%s' failed!\n", externhost);
 			}
 			externexpire = time(NULL) + externrefresh;
@@ -3934,6 +3981,9 @@ static __attribute__((format(printf, 2, 0))) void append_history_va(struct sip_p
 	}
 	AST_LIST_INSERT_TAIL(p->history, hist, list);
 	p->history_entries++;
+	if (log_level != -1) {
+		ast_log_dynamic_level(log_level, "%s\n", buf);
+	}
 }
 
 /*! \brief Append to SIP dialog history with arg list  */
@@ -6008,7 +6058,7 @@ static int dialog_initialize_rtp(struct sip_pvt *dialog)
 		ast_rtp_instance_set_hold_timeout(dialog->vrtp, dialog->rtpholdtimeout);
 		ast_rtp_instance_set_keepalive(dialog->vrtp, dialog->rtpkeepalive);
 
-		ast_rtp_instance_set_prop(dialog->vrtp, AST_RTP_PROPERTY_RTCP, 1);
+		ast_rtp_instance_set_prop(dialog->vrtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 		ast_rtp_instance_set_qos(dialog->vrtp, global_tos_video, global_cos_video, "SIP VIDEO");
 	}
 
@@ -6028,14 +6078,14 @@ static int dialog_initialize_rtp(struct sip_pvt *dialog)
 		/* Do not timeout text as its not constant*/
 		ast_rtp_instance_set_keepalive(dialog->trtp, dialog->rtpkeepalive);
 
-		ast_rtp_instance_set_prop(dialog->trtp, AST_RTP_PROPERTY_RTCP, 1);
+		ast_rtp_instance_set_prop(dialog->trtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 	}
 
 	ast_rtp_instance_set_timeout(dialog->rtp, dialog->rtptimeout);
 	ast_rtp_instance_set_hold_timeout(dialog->rtp, dialog->rtpholdtimeout);
 	ast_rtp_instance_set_keepalive(dialog->rtp, dialog->rtpkeepalive);
 
-	ast_rtp_instance_set_prop(dialog->rtp, AST_RTP_PROPERTY_RTCP, 1);
+	ast_rtp_instance_set_prop(dialog->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 	ast_rtp_instance_set_prop(dialog->rtp, AST_RTP_PROPERTY_DTMF, ast_test_flag(&dialog->flags[0], SIP_DTMF) == SIP_DTMF_RFC2833);
 	ast_rtp_instance_set_prop(dialog->rtp, AST_RTP_PROPERTY_DTMF_COMPENSATE, ast_test_flag(&dialog->flags[1], SIP_PAGE2_RFC2833_COMPENSATE));
 
@@ -6887,10 +6937,9 @@ static int update_call_counter(struct sip_pvt *fup, int event)
 		ast_log(LOG_ERROR, "update_call_counter(%s, %d) called with no event!\n", name, event);
 	}
 
-	if (p) {
-		ast_devstate_changed(AST_DEVICE_UNKNOWN, AST_DEVSTATE_CACHABLE, "SIP/%s", p->name);
-		sip_unref_peer(p, "update_call_counter: sip_unref_peer from call counter");
-	}
+	ast_devstate_changed(AST_DEVICE_UNKNOWN, AST_DEVSTATE_CACHABLE, "SIP/%s", p->name);
+	sip_unref_peer(p, "update_call_counter: sip_unref_peer from call counter");
+
 	return 0;
 }
 
@@ -7372,6 +7421,12 @@ static void try_suggested_sip_codec(struct sip_pvt *p)
 
 		ao2_ref(fmt, -1);
 	}
+
+	/* The original joint formats may have contained negotiated parameters (fmtp)
+	 * like the Opus Codec or iLBC 20. The cached formats contain the default
+	 * parameters, which could be different than the negotiated (joint) result. */
+	ast_format_cap_replace_from_cap(p->jointcaps, original_jointcaps, AST_MEDIA_TYPE_UNKNOWN);
+
 	ao2_ref(original_jointcaps, -1);
 	return;
  }
@@ -7744,6 +7799,15 @@ static int interpret_t38_parameters(struct sip_pvt *p, const struct ast_control_
 	return res;
 }
 
+enum sip_media_fds {
+	SIP_AUDIO_RTP_FD,
+	SIP_AUDIO_RTCP_FD,
+	SIP_VIDEO_RTP_FD,
+	SIP_VIDEO_RTCP_FD,
+	SIP_TEXT_RTP_FD,
+	SIP_UDPTL_FD,
+};
+
 /*!
  * \internal
  * \brief Create and initialize UDPTL for the specified dialog
@@ -7772,7 +7836,7 @@ static int initialize_udptl(struct sip_pvt *p)
 	/* T38 can be supported by this dialog, create it and set the derived properties */
 	if ((p->udptl = ast_udptl_new_with_bindaddr(sched, io, 0, &bindaddr))) {
 		if (p->owner) {
-			ast_channel_set_fd(p->owner, 5, ast_udptl_fd(p->udptl));
+			ast_channel_set_fd(p->owner, SIP_UDPTL_FD, ast_udptl_fd(p->udptl));
 		}
 
 		ast_udptl_setqos(p->udptl, global_tos_audio, global_cos_audio);
@@ -8133,7 +8197,9 @@ static struct ast_channel *sip_new(struct sip_pvt *i, int state, const char *tit
 		if (!fmt) {
 			ast_log(LOG_WARNING, "No compatible formats could be found for %s\n", ast_channel_name(tmp));
 			ao2_ref(caps, -1);
-			tmp = ast_channel_unref(tmp);
+			ast_channel_stage_snapshot_done(tmp);
+			ast_channel_unlock(tmp);
+			ast_hangup(tmp);
 			return NULL;
 		}
 	}
@@ -8153,12 +8219,17 @@ static struct ast_channel *sip_new(struct sip_pvt *i, int state, const char *tit
 	   We also check for vrtp. If it's not there, we are not allowed do any video anyway.
 	 */
 	if (i->vrtp) {
-		if (ast_test_flag(&i->flags[1], SIP_PAGE2_VIDEOSUPPORT))
+		if (ast_test_flag(&i->flags[1], SIP_PAGE2_VIDEOSUPPORT_ALWAYS))
 			needvideo = 1;
 		else if (ast_format_cap_count(i->prefcaps))
 			needvideo = ast_format_cap_has_type(i->prefcaps, AST_MEDIA_TYPE_VIDEO);	/* Outbound call */
 		else
 			needvideo = ast_format_cap_has_type(i->jointcaps, AST_MEDIA_TYPE_VIDEO);	/* Inbound call */
+
+		if (!needvideo) {
+			ast_rtp_instance_destroy(i->vrtp);
+			i->vrtp = NULL;
+		}
 	}
 
 	if (i->trtp) {
@@ -8191,20 +8262,28 @@ static struct ast_channel *sip_new(struct sip_pvt *i, int state, const char *tit
 	 * UDPTL is created as needed in the lifetime of a dialog, its file
 	 * descriptor is set in initialize_udptl */
 	if (i->rtp) {
-		ast_channel_set_fd(tmp, 0, ast_rtp_instance_fd(i->rtp, 0));
-		ast_channel_set_fd(tmp, 1, ast_rtp_instance_fd(i->rtp, 1));
+		ast_channel_set_fd(tmp, SIP_AUDIO_RTP_FD, ast_rtp_instance_fd(i->rtp, 0));
+		if (ast_test_flag(&i->flags[2], SIP_PAGE3_RTCP_MUX)) {
+			ast_channel_set_fd(tmp, SIP_AUDIO_RTCP_FD, -1);
+		} else {
+			ast_channel_set_fd(tmp, SIP_AUDIO_RTCP_FD, ast_rtp_instance_fd(i->rtp, 1));
+		}
 		ast_rtp_instance_set_write_format(i->rtp, fmt);
 		ast_rtp_instance_set_read_format(i->rtp, fmt);
 	}
 	if (needvideo && i->vrtp) {
-		ast_channel_set_fd(tmp, 2, ast_rtp_instance_fd(i->vrtp, 0));
-		ast_channel_set_fd(tmp, 3, ast_rtp_instance_fd(i->vrtp, 1));
+		ast_channel_set_fd(tmp, SIP_VIDEO_RTP_FD, ast_rtp_instance_fd(i->vrtp, 0));
+		if (ast_test_flag(&i->flags[2], SIP_PAGE3_RTCP_MUX)) {
+			ast_channel_set_fd(tmp, SIP_VIDEO_RTCP_FD, -1);
+		} else {
+			ast_channel_set_fd(tmp, SIP_VIDEO_RTCP_FD, ast_rtp_instance_fd(i->vrtp, 1));
+		}
 	}
 	if (needtext && i->trtp) {
-		ast_channel_set_fd(tmp, 4, ast_rtp_instance_fd(i->trtp, 0));
+		ast_channel_set_fd(tmp, SIP_TEXT_RTP_FD, ast_rtp_instance_fd(i->trtp, 0));
 	}
 	if (i->udptl) {
-		ast_channel_set_fd(tmp, 5, ast_udptl_fd(i->udptl));
+		ast_channel_set_fd(tmp, SIP_UDPTL_FD, ast_udptl_fd(i->udptl));
 	}
 
 	if (state == AST_STATE_RING) {
@@ -8446,8 +8525,6 @@ static const char *__get_header(const struct sip_request *req, const char *name,
 	 * one afterwards.  If you shouldn't do it, what absolute idiot decided it was
 	 * a good idea to say you can do it, and if you can do it, why in the hell would.
 	 * you say you shouldn't.
-	 * Anyways, pedanticsipchecking controls whether we allow spaces before ':',
-	 * and we always allow spaces after that for compatibility.
 	 */
 	const char *sname = find_alias(name, NULL);
 	int x, len = strlen(name), slen = (sname ? 1 : 0);
@@ -8460,10 +8537,10 @@ static const char *__get_header(const struct sip_request *req, const char *name,
 		if (match || smatch) {
 			/* skip name */
 			const char *r = header + (match ? len : slen );
-			if (sip_cfg.pedanticsipchecking) {
-				r = ast_skip_blanks(r);
+			/* HCOLON has optional SP/HTAB; skip past those */
+			while (*r == ' ' || *r == '\t') {
+				++r;
 			}
-
 			if (*r == ':') {
 				*start = x+1;
 				return ast_skip_blanks(r+1);
@@ -8628,9 +8705,7 @@ static struct ast_frame *sip_read(struct ast_channel *ast)
 
 	sip_pvt_lock(p);
 	fr = sip_rtp_read(ast, p, &faxdetected);
-	if (fr && fr->frametype != AST_FRAME_NULL) {
-		p->lastrtprx = time(NULL);
-	}
+	p->lastrtprx = time(NULL);
 
 	/* If we detect a CNG tone and fax detection is enabled then send us off to the fax extension */
 	if (faxdetected && ast_test_flag(&p->flags[1], SIP_PAGE2_FAX_DETECT_CNG)) {
@@ -9211,7 +9286,7 @@ static enum match_req_res match_req_to_dialog(struct sip_pvt *sip_pvt_ptr, struc
 }
 
 /*! \brief This function creates a dialog to handle a forked request.  This dialog
- * exists only to properly terminiate the the forked request immediately.
+ * exists only to properly terminiate the forked request immediately.
  */
 static void forked_invite_init(struct sip_request *req, const char *new_theirtag, struct sip_pvt *original, struct ast_sockaddr *addr)
 {
@@ -10063,6 +10138,60 @@ static int has_media_stream(struct sip_pvt *p, enum media_type m)
 	return 0;
 }
 
+static void configure_rtcp(struct sip_pvt *p, struct ast_rtp_instance *instance, int which, int remote_rtcp_mux)
+{
+	int local_rtcp_mux = ast_test_flag(&p->flags[2], SIP_PAGE3_RTCP_MUX);
+	int fd = -1;
+
+	if (local_rtcp_mux && remote_rtcp_mux) {
+		ast_rtp_instance_set_prop(instance, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_MUX);
+	} else {
+		ast_rtp_instance_set_prop(instance, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
+		fd = ast_rtp_instance_fd(instance, 1);
+	}
+
+	if (p->owner) {
+		ast_channel_set_fd(p->owner, which, fd);
+	}
+}
+
+static void set_ice_components(struct sip_pvt *p, struct ast_rtp_instance *instance, int remote_rtcp_mux)
+{
+	struct ast_rtp_engine_ice *ice;
+	int local_rtcp_mux = ast_test_flag(&p->flags[2], SIP_PAGE3_RTCP_MUX);
+
+	ice = ast_rtp_instance_get_ice(instance);
+	if (!ice) {
+		return;
+	}
+
+	if (local_rtcp_mux && remote_rtcp_mux) {
+		/* We both support RTCP mux. Only one ICE component necessary */
+		ice->change_components(instance, 1);
+	} else {
+		/* They either don't support RTCP mux or we don't know if they do yet. */
+		ice->change_components(instance, 2);
+	}
+}
+
+static int has_media_level_attribute(int start, struct sip_request *req, const char *attr)
+{
+	int next = start;
+	char type;
+	const char *value;
+
+	/* We don't care about the return result here */
+	get_sdp_iterate(&next, req, "m");
+
+	while ((type = get_sdp_line(&start, next, req, &value)) != '\0') {
+		if (type == 'a' && !strcasecmp(value, attr)) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 /*! \brief Process SIP SDP offer, select formats and activate media channels
 	If offer is rejected, we will not change any properties of the call
  	Return 0 on success, a negative value on errors.
@@ -10120,6 +10249,10 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 	/* SRTP */
 	int secure_audio = FALSE;
 	int secure_video = FALSE;
+
+	/* RTCP Multiplexing */
+	int remote_rtcp_mux_audio = FALSE;
+	int remote_rtcp_mux_video = FALSE;
 
 	/* Others */
 	int sendonly = -1;
@@ -10201,13 +10334,13 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 			else if (process_sdp_a_image(value, p))
 				processed = TRUE;
 
-			if (process_sdp_a_ice(value, p, p->rtp)) {
+			if (process_sdp_a_ice(value, p, p->rtp, 0)) {
 				processed = TRUE;
 			}
-			if (process_sdp_a_ice(value, p, p->vrtp)) {
+			if (process_sdp_a_ice(value, p, p->vrtp, 0)) {
 				processed = TRUE;
 			}
-			if (process_sdp_a_ice(value, p, p->trtp)) {
+			if (process_sdp_a_ice(value, p, p->trtp, 0)) {
 				processed = TRUE;
 			}
 
@@ -10247,6 +10380,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 		int image = FALSE;
 		int text = FALSE;
 		int processed_crypto = FALSE;
+		int rtcp_mux_offered = 0;
 		char protocol[18] = {0,};
 		unsigned int x;
 		struct ast_rtp_engine_dtls *dtls;
@@ -10265,6 +10399,9 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 		}
 		AST_LIST_INSERT_TAIL(&p->offered_media, offer, next);
 		offer->type = SDP_UNKNOWN;
+
+		/* We need to check for this ahead of time */
+		rtcp_mux_offered = has_media_level_attribute(iterator, req, "rtcp-mux");
 
 		/* Check for 'audio' media offer */
 		if (strncmp(m, "audio ", 6) == 0) {
@@ -10632,7 +10769,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 			case 'a':
 				/* Audio specific scanning */
 				if (audio) {
-					if (process_sdp_a_ice(value, p, p->rtp)) {
+					if (process_sdp_a_ice(value, p, p->rtp, rtcp_mux_offered)) {
 						processed = TRUE;
 					} else if (process_sdp_a_dtls(value, p, p->rtp)) {
 						processed_crypto = TRUE;
@@ -10651,11 +10788,13 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 						}
 					} else if (process_sdp_a_audio(value, p, &newaudiortp, &last_rtpmap_codec)) {
 						processed = TRUE;
+					} else if (process_sdp_a_rtcp_mux(value, p, &remote_rtcp_mux_audio)) {
+						processed = TRUE;
 					}
 				}
 				/* Video specific scanning */
 				else if (video) {
-					if (process_sdp_a_ice(value, p, p->vrtp)) {
+					if (process_sdp_a_ice(value, p, p->vrtp, rtcp_mux_offered)) {
 						processed = TRUE;
 					} else if (process_sdp_a_dtls(value, p, p->vrtp)) {
 						processed_crypto = TRUE;
@@ -10672,11 +10811,13 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 						}
 					} else if (process_sdp_a_video(value, p, &newvideortp, &last_rtpmap_codec)) {
 						processed = TRUE;
+					} else if (process_sdp_a_rtcp_mux(value, p, &remote_rtcp_mux_video)) {
+						processed = TRUE;
 					}
 				}
 				/* Text (T.140) specific scanning */
 				else if (text) {
-					if (process_sdp_a_ice(value, p, p->trtp)) {
+					if (process_sdp_a_ice(value, p, p->trtp, rtcp_mux_offered)) {
 						processed = TRUE;
 					} else if (process_sdp_a_text(value, p, &newtextrtp, red_fmtp, &red_num_gen, red_data_pt, &last_rtpmap_codec)) {
 						processed = TRUE;
@@ -10803,6 +10944,9 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 		struct ast_str *vpeer_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 		struct ast_str *tpeer_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 		struct ast_str *joint_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
+		struct ast_str *s1 = ast_str_alloca(SIPBUFSIZE);
+		struct ast_str *s2 = ast_str_alloca(SIPBUFSIZE);
+		struct ast_str *s3 = ast_str_alloca(SIPBUFSIZE);
 
 		ast_verbose("Capabilities: us - %s, peer - audio=%s/video=%s/text=%s, combined - %s\n",
 			    ast_format_cap_get_names(p->caps, &cap_buf),
@@ -10810,11 +10954,6 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 			    ast_format_cap_get_names(vpeercapability, &vpeer_buf),
 			    ast_format_cap_get_names(tpeercapability, &tpeer_buf),
 			    ast_format_cap_get_names(newjointcapability, &joint_buf));
-	}
-	if (debug) {
-		struct ast_str *s1 = ast_str_alloca(SIPBUFSIZE);
-		struct ast_str *s2 = ast_str_alloca(SIPBUFSIZE);
-		struct ast_str *s3 = ast_str_alloca(SIPBUFSIZE);
 
 		ast_verbose("Non-codec capabilities (dtmf): us - %s, peer - %s, combined - %s\n",
 			    ast_rtp_lookup_mime_multiple2(s1, NULL, p->noncodeccapability, 0, 0),
@@ -10848,6 +10987,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 		if (sa && portno > 0) {
 			/* Start ICE negotiation here, only when it is response, and setting that we are conrolling agent,
 			   as we are offerer */
+			set_ice_components(p, p->rtp, remote_rtcp_mux_audio);
 			if (req->method == SIP_RESPONSE) {
 				start_ice(p->rtp, 1);
 			}
@@ -10861,11 +11001,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 			ast_rtp_codecs_payloads_copy(&newaudiortp, ast_rtp_instance_get_codecs(p->rtp), p->rtp);
 			/* Ensure RTCP is enabled since it may be inactive
 			   if we're coming back from a T.38 session */
-			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, 1);
-			/* Ensure audio RTCP reads are enabled */
-			if (p->owner) {
-				ast_channel_set_fd(p->owner, 1, ast_rtp_instance_fd(p->rtp, 1));
-			}
+			configure_rtcp(p, p->rtp, SIP_AUDIO_RTCP_FD, remote_rtcp_mux_audio);
 
 			if (ast_test_flag(&p->flags[0], SIP_DTMF) == SIP_DTMF_AUTO) {
 				ast_clear_flag(&p->flags[0], SIP_DTMF);
@@ -10888,10 +11024,10 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 
 			/* Prevent audio RTCP reads */
 			if (p->owner) {
-				ast_channel_set_fd(p->owner, 1, -1);
+				ast_channel_set_fd(p->owner, SIP_AUDIO_RTCP_FD, -1);
 			}
 			/* Silence RTCP while audio RTP is inactive */
-			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, 0);
+			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_DISABLED);
 		} else {
 			ast_rtp_instance_stop(p->rtp);
 			if (debug)
@@ -10902,6 +11038,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 	/* Setup video address and port */
 	if (p->vrtp) {
 		if (vsa && vportno > 0) {
+			set_ice_components(p, p->vrtp, remote_rtcp_mux_video);
 			start_ice(p->vrtp, (req->method != SIP_RESPONSE) ? 0 : 1);
 			ast_sockaddr_set_port(vsa, vportno);
 			ast_rtp_instance_set_remote_address(p->vrtp, vsa);
@@ -10910,6 +11047,7 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 					    ast_sockaddr_stringify(vsa));
 			}
 			ast_rtp_codecs_payloads_copy(&newvideortp, ast_rtp_instance_get_codecs(p->vrtp), p->vrtp);
+			configure_rtcp(p, p->vrtp, SIP_VIDEO_RTCP_FD, remote_rtcp_mux_video);
 		} else {
 			ast_rtp_instance_stop(p->vrtp);
 			if (debug)
@@ -11201,11 +11339,11 @@ static int process_sdp_a_sendonly(const char *a, int *sendonly)
 	return found;
 }
 
-static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_instance *instance)
+static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_instance *instance, int rtcp_mux_offered)
 {
 	struct ast_rtp_engine_ice *ice;
 	int found = FALSE;
-	char ufrag[256], pwd[256], foundation[32], transport[4], address[46], cand_type[6], relay_address[46] = "";
+	char ufrag[256], pwd[256], foundation[33], transport[4], address[46], cand_type[6], relay_address[46] = "";
 	struct ast_rtp_engine_ice_candidate candidate = { 0, };
 	unsigned int port, relay_port = 0;
 
@@ -11219,8 +11357,14 @@ static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_in
 	} else if (sscanf(a, "ice-pwd: %255s", pwd) == 1) {
 		ice->set_authentication(instance, NULL, pwd);
 		found = TRUE;
-	} else if (sscanf(a, "candidate: %31s %30u %3s %30u %23s %30u typ %5s %*s %23s %*s %30u", foundation, &candidate.id, transport, (unsigned *)&candidate.priority,
+	} else if (sscanf(a, "candidate: %32s %30u %3s %30u %23s %30u typ %5s %*s %23s %*s %30u", foundation, &candidate.id, transport, (unsigned *)&candidate.priority,
 			  address, &port, cand_type, relay_address, &relay_port) >= 7) {
+
+		if (rtcp_mux_offered && ast_test_flag(&p->flags[2], SIP_PAGE3_RTCP_MUX) && candidate.id > 1) {
+			/* If we support RTCP-MUX and they offered it, don't consider RTCP candidates */
+			return TRUE;
+		}
+
 		candidate.foundation = foundation;
 		candidate.transport = transport;
 
@@ -11250,6 +11394,18 @@ static int process_sdp_a_ice(const char *a, struct sip_pvt *p, struct ast_rtp_in
 		found = TRUE;
 	} else if (!strcasecmp(a, "ice-lite")) {
 		ice->ice_lite(instance);
+		found = TRUE;
+	}
+
+	return found;
+}
+
+static int process_sdp_a_rtcp_mux(const char *a, struct sip_pvt *p, int *requested)
+{
+	int found = FALSE;
+
+	if (!strncasecmp(a, "rtcp-mux", 8)) {
+		*requested = TRUE;
 		found = TRUE;
 	}
 
@@ -12902,7 +13058,7 @@ static void add_ice_to_sdp(struct ast_rtp_instance *instance, struct ast_str **a
 
 	while ((candidate = ao2_iterator_next(&i))) {
 		ast_str_append(a_buf, 0, "a=candidate:%s %u %s %d ", candidate->foundation, candidate->id, candidate->transport, candidate->priority);
-		ast_str_append(a_buf, 0, "%s ", ast_sockaddr_stringify_host(&candidate->address));
+		ast_str_append(a_buf, 0, "%s ", ast_sockaddr_stringify_addr_remote(&candidate->address));
 
 		ast_str_append(a_buf, 0, "%s typ ", ast_sockaddr_stringify_port(&candidate->address));
 
@@ -12915,7 +13071,7 @@ static void add_ice_to_sdp(struct ast_rtp_instance *instance, struct ast_str **a
 		}
 
 		if (!ast_sockaddr_isnull(&candidate->relay_address)) {
-			ast_str_append(a_buf, 0, " raddr %s ", ast_sockaddr_stringify_host(&candidate->relay_address));
+			ast_str_append(a_buf, 0, " raddr %s ", ast_sockaddr_stringify_addr_remote(&candidate->relay_address));
 			ast_str_append(a_buf, 0, "rport %s", ast_sockaddr_stringify_port(&candidate->relay_address));
 		}
 
@@ -13015,7 +13171,7 @@ static void add_codec_to_sdp(const struct sip_pvt *p,
 	/* Opus mandates 2 channels in rtpmap */
 	if (ast_format_cmp(format, ast_format_opus) == AST_FORMAT_CMP_EQUAL) {
 		ast_str_append(a_buf, 0, "a=rtpmap:%d %s/%u/2\r\n", rtp_code, mime, rate);
-	} else if ((35 <= rtp_code) || !(sip_cfg.compactheaders)) {
+	} else if ((AST_RTP_PT_LAST_STATIC < rtp_code) || !(sip_cfg.compactheaders)) {
 		ast_str_append(a_buf, 0, "a=rtpmap:%d %s/%u\r\n", rtp_code, mime, rate);
 	}
 
@@ -13417,12 +13573,13 @@ static enum sip_result add_sdp(struct sip_request *resp, struct sip_pvt *p, int 
 
 	get_our_media_address(p, needvideo, needtext, &addr, &vaddr, &taddr, &dest, &vdest, &tdest);
 
+	/* We don't use dest here but p->ourip because address in o= field must not change in reINVITE */
 	snprintf(owner, sizeof(owner), "o=%s %d %d IN %s %s\r\n",
 		 ast_strlen_zero(global_sdpowner) ? "-" : global_sdpowner,
 		 p->sessionid, p->sessionversion,
-		 (ast_sockaddr_is_ipv6(&dest) && !ast_sockaddr_is_ipv4_mapped(&dest)) ?
+		 (ast_sockaddr_is_ipv6(&p->ourip) && !ast_sockaddr_is_ipv4_mapped(&p->ourip)) ?
 			"IP6" : "IP4",
-		 ast_sockaddr_stringify_addr_remote(&dest));
+		 ast_sockaddr_stringify_addr_remote(&p->ourip));
 
 	snprintf(connection, sizeof(connection), "c=IN %s %s\r\n",
 		 (ast_sockaddr_is_ipv6(&dest) && !ast_sockaddr_is_ipv4_mapped(&dest)) ?
@@ -13623,6 +13780,12 @@ static enum sip_result add_sdp(struct sip_request *resp, struct sip_pvt *p, int 
 
 			add_dtls_to_sdp(p->rtp, &a_audio);
 		}
+
+		/* If we've got rtcp-mux enabled, just unconditionally offer it in all SDPs */
+		if (ast_test_flag(&p->flags[2], SIP_PAGE3_RTCP_MUX)) {
+			ast_str_append(&a_audio, 0, "a=rtcp-mux\r\n");
+			ast_str_append(&a_video, 0, "a=rtcp-mux\r\n");
+		}
 	}
 
 	if (add_t38) {
@@ -13704,11 +13867,11 @@ static enum sip_result add_sdp(struct sip_request *resp, struct sip_pvt *p, int 
 			case SDP_AUDIO:
 				if (needaudio) {
 					add_content(resp, ast_str_buffer(m_audio));
-					add_content(resp, ast_str_buffer(a_audio));
-					add_content(resp, hold);
 					if (a_crypto) {
 						add_content(resp, a_crypto);
 					}
+					add_content(resp, ast_str_buffer(a_audio));
+					add_content(resp, hold);
 				} else {
 					add_content(resp, offer->decline_m_line);
 				}
@@ -13754,11 +13917,11 @@ static enum sip_result add_sdp(struct sip_request *resp, struct sip_pvt *p, int 
 		/* generate new SDP from scratch, no offers */
 		if (needaudio) {
 			add_content(resp, ast_str_buffer(m_audio));
-			add_content(resp, ast_str_buffer(a_audio));
-			add_content(resp, hold);
 			if (a_crypto) {
 				add_content(resp, a_crypto);
 			}
+			add_content(resp, ast_str_buffer(a_audio));
+			add_content(resp, hold);
 		}
 		if (needvideo) { /* only if video response is appropriate */
 			add_content(resp, ast_str_buffer(m_video));
@@ -13990,18 +14153,18 @@ static int transmit_reinvite_with_sdp(struct sip_pvt *p, int t38version, int old
 	if (p->rtp) {
 		if (t38version) {
 			/* Silence RTCP while audio RTP is inactive */
-			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, 0);
+			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_DISABLED);
 			if (p->owner) {
 				/* Prevent audio RTCP reads */
-				ast_channel_set_fd(p->owner, 1, -1);
+				ast_channel_set_fd(p->owner, SIP_AUDIO_RTCP_FD, -1);
 			}
 		} else if (ast_sockaddr_isnull(&p->redirip)) {
 			/* Enable RTCP since it will be inactive if we're coming back
 			 * with this reinvite */
-			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, 1);
+			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 			if (p->owner) {
 				/* Enable audio RTCP reads */
-				ast_channel_set_fd(p->owner, 1, ast_rtp_instance_fd(p->rtp, 1));
+				ast_channel_set_fd(p->owner, SIP_AUDIO_RTCP_FD, ast_rtp_instance_fd(p->rtp, 1));
 			}
 		}
 	}
@@ -14157,6 +14320,7 @@ static void build_contact(struct sip_pvt *p, struct sip_request *req, int incomi
 	char tmp[SIPBUFSIZE];
 	char *user = ast_uri_encode(p->exten, tmp, sizeof(tmp), ast_uri_sip_user);
 	int use_sips;
+	char *transport = ast_strdupa(sip_get_transport(p->socket.type));
 
 	if (incoming) {
 		use_sips = uas_sips_contact(req);
@@ -14171,7 +14335,7 @@ static void build_contact(struct sip_pvt *p, struct sip_request *req, int incomi
 	} else {
 		ast_string_field_build(p, our_contact, "<%s:%s%s%s;transport=%s>",
 			use_sips ? "sips" : "sip", user, ast_strlen_zero(user) ? "" : "@",
-			ast_sockaddr_stringify_remote(&p->ourip), sip_get_transport(p->socket.type));
+			ast_sockaddr_stringify_remote(&p->ourip), ast_str_to_lower(transport));
 	}
 }
 
@@ -15217,7 +15381,7 @@ static int transmit_cc_notify(struct ast_cc_agent *agent, struct sip_pvt *subscr
 {
 	struct sip_request req;
 	struct sip_cc_agent_pvt *agent_pvt = agent->private_data;
-	char uri[SIPBUFSIZE];
+	char uri[SIPBUFSIZE + sizeof("cc-URI: \r\n") - 1];
 	char state_str[64];
 	char subscription_state_hdr[64];
 
@@ -15234,7 +15398,7 @@ static int transmit_cc_notify(struct ast_cc_agent *agent, struct sip_pvt *subscr
 	add_header(&req, "Subscription-State", subscription_state_hdr);
 	if (state == CC_READY) {
 		generate_uri(subscription, agent_pvt->notify_uri, sizeof(agent_pvt->notify_uri));
-		snprintf(uri, sizeof(uri) - 1, "cc-URI: %s\r\n", agent_pvt->notify_uri);
+		snprintf(uri, sizeof(uri), "cc-URI: %s\r\n", agent_pvt->notify_uri);
 	}
 	add_content(&req, state_str);
 	if (state == CC_READY) {
@@ -15430,11 +15594,13 @@ static int manager_sipnotify(struct mansession *s, const struct message *m)
 {
 	const char *channame = astman_get_header(m, "Channel");
 	struct ast_variable *vars = astman_get_variables_order(m, ORDER_NATURAL);
+	const char *callid = astman_get_header(m, "Call-ID");
 	struct sip_pvt *p;
 	struct ast_variable *header, *var;
 
 	if (ast_strlen_zero(channame)) {
 		astman_send_error(s, m, "SIPNotify requires a channel name");
+		ast_variables_destroy(vars);
 		return 0;
 	}
 
@@ -15442,23 +15608,46 @@ static int manager_sipnotify(struct mansession *s, const struct message *m)
 		channame += 4;
 	}
 
-	if (!(p = sip_alloc(NULL, NULL, 0, SIP_NOTIFY, NULL, 0))) {
-		astman_send_error(s, m, "Unable to build sip pvt data for notify (memory/socket error)");
-		return 0;
-	}
+	/* check if Call-ID header is set */
+	if (!ast_strlen_zero(callid)) {
+		struct sip_pvt tmp_dialog = {
+			.callid = callid,
+		};
 
-	if (create_addr(p, channame, NULL, 0)) {
-		/* Maybe they're not registered, etc. */
-		dialog_unlink_all(p);
-		dialog_unref(p, "unref dialog inside for loop" );
-		/* sip_destroy(p); */
-		astman_send_error(s, m, "Could not create address");
-		return 0;
-	}
+		p = ao2_find(dialogs, &tmp_dialog, OBJ_SEARCH_OBJECT);
+		if (!p) {
+			astman_send_error(s, m, "Call-ID not found");
+			ast_variables_destroy(vars);
+			return 0;
+		}
 
-	/* Notify is outgoing call */
-	ast_set_flag(&p->flags[0], SIP_OUTGOING);
-	sip_notify_alloc(p);
+		if (!(p->notify)) {
+			sip_notify_alloc(p);
+		} else {
+			ast_variables_destroy(p->notify->headers);
+		}
+	} else {
+		if (!(p = sip_alloc(NULL, NULL, 0, SIP_NOTIFY, NULL, 0))) {
+			astman_send_error(s, m, "Unable to build sip pvt data for notify (memory/socket error)");
+			ast_variables_destroy(vars);
+			return 0;
+		}
+
+		if (create_addr(p, channame, NULL, 0)) {
+			/* Maybe they're not registered, etc. */
+			dialog_unlink_all(p);
+			dialog_unref(p, "unref dialog inside for loop" );
+			/* sip_destroy(p); */
+			astman_send_error(s, m, "Could not create address");
+			ast_variables_destroy(vars);
+			return 0;
+		}
+
+		/* Notify is outgoing call */
+		ast_set_flag(&p->flags[0], SIP_OUTGOING);
+		sip_notify_alloc(p);
+
+	}
 
 	p->notify->headers = header = ast_variable_new("Subscription-State", "terminated", "");
 
@@ -15475,14 +15664,19 @@ static int manager_sipnotify(struct mansession *s, const struct message *m)
 		}
 	}
 
-	/* Now that we have the peer's address, set our ip and change callid */
-	ast_sip_ouraddrfor(&p->sa, &p->ourip, p);
-	build_via(p);
+	if (ast_strlen_zero(callid)) {
+		/* Now that we have the peer's address, set our ip and change callid */
+		ast_sip_ouraddrfor(&p->sa, &p->ourip, p);
+		build_via(p);
 
-	change_callid_pvt(p, NULL);
+		change_callid_pvt(p, NULL);
 
-	sip_scheddestroy(p, SIP_TRANS_TIMEOUT);
-	transmit_invite(p, SIP_NOTIFY, 0, 2, NULL);
+		sip_scheddestroy(p, SIP_TRANS_TIMEOUT);
+		transmit_invite(p, SIP_NOTIFY, 0, 2, NULL);
+	} else {
+		sip_scheddestroy(p, SIP_TRANS_TIMEOUT);
+		transmit_invite(p, SIP_NOTIFY, 0, 1, NULL);
+	}
 	dialog_unref(p, "bump down the count of p since we're done with it.");
 
 	astman_send_ack(s, m, "Notify Sent");
@@ -15614,7 +15808,7 @@ static int sip_reregister(const void *data)
 	if (r->call && r->call->do_history) {
 		append_history(r->call, "RegistryRenew", "Account: %s@%s", r->username, r->hostname);
 	}
-	/* Since registry's are only added/removed by the the monitor thread, this
+	/* Since registry's are only added/removed by the monitor thread, this
 	   may be overkill to reference/dereference at all here */
 	if (sipdebug) {
 		ast_log(LOG_NOTICE, "   -- Re-registration for  %s@%s\n", r->username, r->hostname);
@@ -16819,7 +17013,7 @@ static enum parse_register_result parse_register_contact(struct sip_pvt *pvt, st
 	}
 
 	if ((transport_type != AST_TRANSPORT_WS) && (transport_type != AST_TRANSPORT_WSS) &&
-	    (!ast_test_flag(&peer->flags[0], SIP_NAT_FORCE_RPORT) && !ast_test_flag(&peer->flags[0], SIP_NAT_RPORT_PRESENT))) {
+	    (!ast_test_flag(&peer->flags[0], SIP_NAT_FORCE_RPORT) && !ast_test_flag(&pvt->flags[0], SIP_NAT_RPORT_PRESENT))) {
 		/* use the data provided in the Contact header for call routing */
 		ast_debug(1, "Store REGISTER's Contact header for call routing.\n");
 		/* XXX This could block for a long time XXX */
@@ -17966,7 +18160,7 @@ static int get_pai(struct sip_pvt *p, struct sip_request *req)
 	}
 
 	ast_copy_string(privacy, sip_get_header(req, "Privacy"), sizeof(privacy));
-	if (!ast_strlen_zero(privacy) && !strncmp(privacy, "id", 2)) {
+	if (!ast_strlen_zero(privacy) && strcasecmp(privacy, "none")) {
 		callingpres = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
 	}
 	if (!cid_name) {
@@ -18354,10 +18548,11 @@ static enum sip_get_dest_result get_destination(struct sip_pvt *p, struct sip_re
 
 	/* If this is a subscription we actually just need to see if a hint exists for the extension */
 	if (req->method == SIP_SUBSCRIBE) {
-		char hint[AST_MAX_EXTENSION];
 		int which = 0;
-		if (ast_get_hint(hint, sizeof(hint), NULL, 0, NULL, p->context, uri) ||
-		    (ast_get_hint(hint, sizeof(hint), NULL, 0, NULL, p->context, decoded_uri) && (which = 1))) {
+
+		if (ast_get_hint(NULL, 0, NULL, 0, NULL, p->context, uri)
+			|| (ast_get_hint(NULL, 0, NULL, 0, NULL, p->context, decoded_uri)
+				&& (which = 1))) {
 			if (!oreq) {
 				ast_string_field_set(p, exten, which ? decoded_uri : uri);
 			}
@@ -18508,10 +18703,38 @@ static int get_sip_pvt_from_replaces(const char *callid, const char *totag,
 		}
 	}
 
+	if (!sip_pvt_ptr) {
+		/* return error if sip_pvt was not found */
+		return -1;
+	}
+
 	/* If we're here sip_pvt_ptr has been copied to *out_pvt, prevent RAII_VAR cleanup */
 	sip_pvt_ptr = NULL;
 
 	return 0;
+}
+
+static void extract_transferrer_headers(const char *prefix, struct ast_channel *peer, const struct sip_request *req)
+{
+	struct ast_str *pbxvar = ast_str_alloca(120);
+	int i;
+
+	/* The '*' alone matches all headers. */
+	if (strcmp(prefix, "*") == 0) {
+		prefix = "";
+	}
+
+	for (i = 0; i < req->headers; i++) {
+		const char *header = REQ_OFFSET_TO_STR(req, header[i]);
+		if (ast_begins_with(header, prefix)) {
+			int hdrlen = strcspn(header, " \t:");
+			const char *val = ast_skip_blanks(header + hdrlen);
+			if (hdrlen > 0 && *val == ':') {
+				ast_str_set(&pbxvar, -1, "~HASH~TRANSFER_DATA~%.*s~", hdrlen, header);
+				pbx_builtin_setvar_helper(peer, ast_str_buffer(pbxvar), ast_skip_blanks(val + 1));
+			}
+		}
+	}
 }
 
 /*! \brief Call transfer support (the REFER method)
@@ -18576,10 +18799,18 @@ static int get_refer_info(struct sip_pvt *transferer, struct sip_request *outgoi
 
 		peer = ast_channel_bridge_peer(owner_ref);
 		if (peer) {
+			const char *get_xfrdata;
+
 			pbx_builtin_setvar_helper(peer, "SIPREFERRINGCONTEXT",
 				S_OR(transferer->context, NULL));
 			pbx_builtin_setvar_helper(peer, "__SIPREFERREDBYHDR",
 				S_OR(p_referred_by, NULL));
+
+			ast_channel_lock(peer);
+			get_xfrdata = pbx_builtin_getvar_helper(peer, "GET_TRANSFERRER_DATA");
+			if (!ast_strlen_zero(get_xfrdata)) {
+				extract_transferrer_headers(get_xfrdata, peer, req);
+			}
 			ast_channel_unlock(peer);
 		}
 
@@ -19577,7 +19808,7 @@ static char *sip_show_inuse(struct ast_cli_entry *e, int cmd, struct ast_cli_arg
 
 	switch (cmd) {
 	case CLI_INIT:
-		e->command = "sip show inuse";
+		e->command = "sip show inuse [all]";
 		e->usage =
 			"Usage: sip show inuse [all]\n"
 			"       List all SIP devices usage counters and limits.\n"
@@ -19767,7 +19998,7 @@ static char *sip_show_users(struct ast_cli_entry *e, int cmd, struct ast_cli_arg
 
 	switch (cmd) {
 	case CLI_INIT:
-		e->command = "sip show users";
+		e->command = "sip show users [like]";
 		e->usage =
 			"Usage: sip show users [like <pattern>]\n"
 			"       Lists all known SIP users.\n"
@@ -19906,7 +20137,7 @@ static char *sip_show_peers(struct ast_cli_entry *e, int cmd, struct ast_cli_arg
 {
 	switch (cmd) {
 	case CLI_INIT:
-		e->command = "sip show peers";
+		e->command = "sip show peers [like]";
 		e->usage =
 			"Usage: sip show peers [like <pattern>]\n"
 			"       Lists all known SIP peers.\n"
@@ -20132,7 +20363,9 @@ static struct sip_peer *_sip_show_peers_one(int fd, struct mansession *s, struct
 		"ACL: %s\r\n"
 		"Status: %s\r\n"
 		"RealtimeDevice: %s\r\n"
-		"Description: %s\r\n\r\n",
+		"Description: %s\r\n"
+		"Accountcode: %s\r\n"
+		"\r\n",
 		cont->idtext,
 		peer->name,
 		ast_sockaddr_isnull(&peer->addr) ? "-none-" : tmp_host,
@@ -20147,7 +20380,8 @@ static struct sip_peer *_sip_show_peers_one(int fd, struct mansession *s, struct
 		ast_acl_list_is_empty(peer->acl) ? "no" : "yes",       /* permit/deny/acl */
 		status,
 		cont->realtimepeers ? (peer->is_realtime ? "yes" : "no") : "no",
-		peer->description);
+		peer->description,
+		peer->accountcode);
 	}
 	ao2_unlock(peer);
 
@@ -20617,7 +20851,12 @@ static char *sip_show_peer(struct ast_cli_entry *e, int cmd, struct ast_cli_args
 			"       Option \"load\" forces lookup of peer in realtime storage.\n";
 		return NULL;
 	case CLI_GENERATE:
-		return complete_sip_show_peer(a->line, a->word, a->pos, a->n);
+		if (a->pos == 4) {
+			static const char * const completions[] = { "load", NULL };
+			return ast_cli_complete(a->word, completions, a->n);
+		} else {
+			return complete_sip_show_peer(a->line, a->word, a->pos, a->n);
+		}
 	}
 	return _sip_show_peer(0, a->fd, NULL, NULL, a->argc, (const char **) a->argv);
 }
@@ -20787,7 +21026,12 @@ static char *sip_qualify_peer(struct ast_cli_entry *e, int cmd, struct ast_cli_a
 			"       Option \"load\" forces lookup of peer in realtime storage.\n";
 		return NULL;
 	case CLI_GENERATE:
-		return complete_sip_show_peer(a->line, a->word, a->pos, a->n);
+		if (a->pos == 4) {
+			static const char * const completions[] = { "load", NULL };
+			return ast_cli_complete(a->word, completions, a->n);
+		} else {
+			return complete_sip_show_peer(a->line, a->word, a->pos, a->n);
+		}
 	}
 	return _sip_qualify_peer(0, a->fd, NULL, NULL, a->argc, (const char **) a->argv);
 }
@@ -20997,6 +21241,7 @@ static char *_sip_show_peer(int type, int fd, struct mansession *s, const struct
 		ast_cli(fd, "  Parkinglot   : %s\n", peer->parkinglot);
 		ast_cli(fd, "  Use Reason   : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[1], SIP_PAGE2_Q850_REASON)));
 		ast_cli(fd, "  Encryption   : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[1], SIP_PAGE2_USE_SRTP)));
+		ast_cli(fd, "  RTCP Mux     : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[2], SIP_PAGE3_RTCP_MUX)));
 		ast_cli(fd, "\n");
 		peer = sip_unref_peer(peer, "sip_show_peer: sip_unref_peer: done with peer ptr");
 	} else  if (peer && type == 1) { /* manager listing */
@@ -21067,6 +21312,7 @@ static char *_sip_show_peer(int type, int fd, struct mansession *s, const struct
 		astman_append(s, "SIP-Sess-Min: %d\r\n", peer->stimer.st_min_se);
 		astman_append(s, "SIP-RTP-Engine: %s\r\n", peer->engine);
 		astman_append(s, "SIP-Encryption: %s\r\n", ast_test_flag(&peer->flags[1], SIP_PAGE2_USE_SRTP) ? "Y" : "N");
+		astman_append(s, "SIP-RTCP-Mux: %s\r\n", ast_test_flag(&peer->flags[2], SIP_PAGE3_RTCP_MUX) ? "Y" : "N");
 
 		/* - is enumerated */
 		astman_append(s, "SIP-DTMFmode: %s\r\n", dtmfmode2str(ast_test_flag(&peer->flags[0], SIP_DTMF)));
@@ -21158,7 +21404,12 @@ static char *sip_show_user(struct ast_cli_entry *e, int cmd, struct ast_cli_args
 			"       Option \"load\" forces lookup of peer in realtime storage.\n";
 		return NULL;
 	case CLI_GENERATE:
-		return complete_sip_show_user(a->line, a->word, a->pos, a->n);
+		if (a->pos == 4) {
+			static const char * const completions[] = { "load", NULL };
+			return ast_cli_complete(a->word, completions, a->n);
+		} else {
+			return complete_sip_show_user(a->line, a->word, a->pos, a->n);
+		}
 	}
 
 	if (a->argc < 4)
@@ -21649,7 +21900,7 @@ static char *sip_show_settings(struct ast_cli_entry *e, int cmd, struct ast_cli_
 	ast_cli(a->fd, "  Sub. max duration:      %d secs\n", max_subexpiry);
 	ast_cli(a->fd, "  Outbound reg. timeout:  %d secs\n", global_reg_timeout);
 	ast_cli(a->fd, "  Outbound reg. attempts: %d\n", global_regattempts_max);
-	ast_cli(a->fd, "  Outbound reg. retry 403:%d\n", global_reg_retry_403);
+	ast_cli(a->fd, "  Outbound reg. retry 403:%s\n", AST_CLI_YESNO(global_reg_retry_403));
 	ast_cli(a->fd, "  Notify ringing state:   %s%s\n", AST_CLI_YESNO(sip_cfg.notifyringing), sip_cfg.notifyringing == NOTIFYRINGING_NOTINUSE ? " (when not in use)" : "");
 	if (sip_cfg.notifyringing) {
 		ast_cli(a->fd, "    Include CID:          %s%s\n",
@@ -21690,6 +21941,7 @@ static char *sip_show_settings(struct ast_cli_entry *e, int cmd, struct ast_cli_
 	ast_cli(a->fd, "  MOH Interpret:          %s\n", default_mohinterpret);
 	ast_cli(a->fd, "  MOH Suggest:            %s\n", default_mohsuggest);
 	ast_cli(a->fd, "  Voice Mail Extension:   %s\n", default_vmexten);
+	ast_cli(a->fd, "  RTCP Multiplexing:      %s\n", AST_CLI_YESNO(ast_test_flag(&global_flags[2], SIP_PAGE3_RTCP_MUX)));
 
 
 	if (realtimepeers || realtimeregs) {
@@ -22491,7 +22743,12 @@ static char *sip_do_debug(struct ast_cli_entry *e, int cmd, struct ast_cli_args 
 		} else if (!strcasecmp(what, "off")) {
 			sipdebug &= ~sip_debug_console;
 			sipdebug_text = 0;
-			ast_cli(a->fd, "SIP Debugging Disabled\n");
+			if (sipdebug == sip_debug_none) {
+				ast_cli(a->fd, "SIP Debugging Disabled\n");
+			} else {
+				ast_cli(a->fd, "SIP Debugging still enabled due to configuration.\n");
+				ast_cli(a->fd, "Set sipdebug=no in sip.conf and reload to actually disable.\n");
+			}
 			return CLI_SUCCESS;
 		}
 	} else if (a->argc == e->args + 1) { /* ip/peer */
@@ -22857,6 +23114,7 @@ static int func_header_read(struct ast_channel *chan, const char *function, char
 {
 	struct sip_pvt *p;
 	const char *content = NULL;
+	char *mutable_data = ast_strdupa(data);
 	AST_DECLARE_APP_ARGS(args,
 		AST_APP_ARG(header);
 		AST_APP_ARG(number);
@@ -22880,7 +23138,7 @@ static int func_header_read(struct ast_channel *chan, const char *function, char
 		return -1;
 	}
 
-	AST_STANDARD_APP_ARGS(args, data);
+	AST_STANDARD_APP_ARGS(args, mutable_data);
 	if (!args.number) {
 		number = 1;
 	} else {
@@ -22915,6 +23173,91 @@ static struct ast_custom_function sip_header_function = {
 	.name = "SIP_HEADER",
 	.read = func_header_read,
 };
+
+/*! \brief Read unique list of SIP headers (dialplan function) */
+static int func_headers_read2(struct ast_channel *chan, const char *function, char *data, struct ast_str **buf, ssize_t maxlen)
+{
+	int i;
+	struct sip_pvt *pvt;
+	char *mutable_data = ast_strdupa(data);
+	struct ast_str *token = ast_str_alloca(100);
+	AST_DECLARE_APP_ARGS(args,
+		AST_APP_ARG(pattern);
+	);
+
+	if (!chan) {
+		return -1;
+	}
+
+	ast_channel_lock(chan);
+
+	if (!IS_SIP_TECH(ast_channel_tech(chan))) {
+		ast_log(LOG_WARNING, "This function can only be used on SIP channels.\n");
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	pvt = ast_channel_tech_pvt(chan);
+	if (!pvt) {
+		ast_channel_unlock(chan);
+		return -1;
+	}
+
+	AST_STANDARD_APP_ARGS(args, mutable_data);
+	if (!args.pattern || strcmp(args.pattern, "*") == 0) {
+		args.pattern = "";
+	}
+
+	for (i = 0; i < pvt->initreq.headers; i++) {
+		const char *header = REQ_OFFSET_TO_STR(&pvt->initreq, header[i]);
+		if (ast_begins_with(header, args.pattern)) {
+			int hdrlen = strcspn(header, " \t:,");  /* Comma will break our logic, and illegal per RFC. */
+			const char *term = ast_skip_blanks(header + hdrlen);
+			if (hdrlen > 0 && *term == ':') {  /* Header is malformed otherwise! */
+				const char *s = NULL;
+
+				/* Return short headers in full form always. */
+				if (hdrlen == 1) {
+					char short_hdr[2] = { header[0], '\0' };
+					s = find_full_alias(short_hdr, NULL);
+				}
+				if (s) {
+					/* Short header was found and expanded. */
+					ast_str_set(&token, -1, "%s,", s);
+				} else {
+					/* Return the header as is, whether 1-character or not. */
+					ast_str_set(&token, -1, "%.*s,", hdrlen, header);
+				}
+
+				/* Has the same header been already added? */
+				s = ast_str_buffer(*buf);
+				while ((s = strstr(s, ast_str_buffer(token))) != NULL) {
+					/* Found suffix, but is it the full token? */
+					if (s == ast_str_buffer(*buf) || s[-1] == ',')
+						break;
+					/* Only suffix matched, go on with the search after the comma. */
+					s += hdrlen + 1;
+				}
+
+				/* s is null iff not broken from the loop, hence header not yet added. */
+				if (s == NULL) {
+					ast_str_append(buf, maxlen, "%s", ast_str_buffer(token));
+				}
+			}
+		}
+	}
+
+	ast_str_truncate(*buf, -1);  /* Trim the last comma. Safe if empty. */
+
+	ast_channel_unlock(chan);
+	return 0;
+}
+
+static struct ast_custom_function sip_headers_function = {
+	.name = "SIP_HEADERS",
+	.read2 = func_headers_read2,
+};
+
 
 /*! \brief  Dial plan function to check if domain is local */
 static int func_check_sipdomain(struct ast_channel *chan, const char *cmd, char *data, char *buf, size_t len)
@@ -23087,6 +23430,8 @@ static void change_redirecting_information(struct sip_pvt *p, struct sip_request
 		redirecting->from.number.valid = 1;
 		ast_free(redirecting->from.number.str);
 		redirecting->from.number.str = redirecting_from_number;
+	} else {
+		ast_free(redirecting_from_number);
 	}
 	if (!ast_strlen_zero(redirecting_from_name)) {
 		ast_debug(3, "Got redirecting from name %s\n", redirecting_from_name);
@@ -23094,6 +23439,8 @@ static void change_redirecting_information(struct sip_pvt *p, struct sip_request
 		redirecting->from.name.valid = 1;
 		ast_free(redirecting->from.name.str);
 		redirecting->from.name.str = redirecting_from_name;
+	} else {
+		ast_free(redirecting_from_name);
 	}
 	if (!ast_strlen_zero(p->cid_tag)) {
 		ast_free(redirecting->from.tag);
@@ -23107,13 +23454,17 @@ static void change_redirecting_information(struct sip_pvt *p, struct sip_request
 		redirecting->to.number.valid = 1;
 		ast_free(redirecting->to.number.str);
 		redirecting->to.number.str = redirecting_to_number;
+	} else {
+		ast_free(redirecting_to_number);
 	}
 	if (!ast_strlen_zero(redirecting_to_name)) {
-		ast_debug(3, "Got redirecting to name %s\n", redirecting_from_number);
+		ast_debug(3, "Got redirecting to name %s\n", redirecting_to_name);
 		update_redirecting->to.name = 1;
 		redirecting->to.name.valid = 1;
 		ast_free(redirecting->to.name.str);
 		redirecting->to.name.str = redirecting_to_name;
+	} else {
+		ast_free(redirecting_to_name);
 	}
 	redirecting->reason.code = reason;
 	ast_free(redirecting->reason.str);
@@ -23951,6 +24302,7 @@ static void handle_response_invite(struct sip_pvt *p, int resp, const char *rest
 	case 422: /* Session-Timers: Session interval too small */
 		xmitres = transmit_request(p, SIP_ACK, seqno, XMIT_UNRELIABLE, FALSE);
 		ast_string_field_set(p, theirtag, NULL);
+		p->invitestate = INV_CALLING;
 		proc_422_rsp(p, req);
 		break;
 
@@ -24142,6 +24494,7 @@ static void handle_response_subscribe(struct sip_pvt *p, int resp, const char *r
 			ast_cc_monitor_failed(monitor_instance->core_id,
 				monitor_instance->device_name,
 				"Received error response to our SUBSCRIBE");
+			ao2_ref(monitor_instance, -1);
 		}
 		return;
 	}
@@ -25706,8 +26059,7 @@ static int handle_request_update(struct sip_pvt *p, struct sip_request *req)
  * \retval 0 ok
  * \retval -1 failure
  */
-static int handle_request_invite_st(struct sip_pvt *p, struct sip_request *req,
-		const char *required, int reinvite)
+static int handle_request_invite_st(struct sip_pvt *p, struct sip_request *req, int reinvite)
 {
 	const char *p_uac_se_hdr;       /* UAC's Session-Expires header string                      */
 	const char *p_uac_min_se;       /* UAC's requested Min-SE interval (char string)            */
@@ -25787,8 +26139,8 @@ static int handle_request_invite_st(struct sip_pvt *p, struct sip_request *req,
 
 		case SESSION_TIMER_MODE_REFUSE:
 			if (p->reqsipoptions & SIP_OPT_TIMER) {
-				transmit_response_with_unsupported(p, "420 Option Disabled", req, required);
-				ast_log(LOG_WARNING, "Received SIP INVITE with supported but disabled option: %s\n", required);
+				transmit_response_with_unsupported(p, "420 Option Disabled", req, "timer");
+				ast_log(LOG_WARNING, "Received SIP INVITE with supported but disabled option: timer\n");
 				return -1;
 			}
 			break;
@@ -25894,7 +26246,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 	 * then send a 420 with only those unsupported options listed */
 	if (!ast_strlen_zero(unsupported)) {
 		transmit_response_with_unsupported(p, "420 Bad extension (unsupported)", req, unsupported);
-		ast_log(LOG_WARNING, "Received SIP INVITE with unsupported required extension: required:%s unsupported:%s\n", required, unsupported);
+		ast_log(LOG_WARNING, "Received SIP INVITE with unsupported required extension: %s\n", unsupported);
 		p->invitestate = INV_COMPLETED;
 		if (!p->lastinvite) {
 			sip_scheddestroy(p, DEFAULT_TRANS_TIMEOUT);
@@ -25995,7 +26347,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 
 		if (p->owner) {
 			ast_debug(3, "INVITE w Replaces on existing call? Refusing action. [%s]\n", p->callid);
-			transmit_response_reliable(p, "400 Bad request", req);	/* The best way to not not accept the transfer */
+			transmit_response_reliable(p, "400 Bad request", req);	/* The best way to not accept the transfer */
 			check_via(p, req);
 			copy_request(&p->initreq, req);
 			/* Do not destroy existing call */
@@ -26083,7 +26435,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 
 		if (replaces_pvt == p) {
 			ast_log(LOG_NOTICE, "INVITE with replaces into it's own call id (%s == %s)!\n", replace_id, p->callid);
-			transmit_response_reliable(p, "400 Bad request", req);	/* The best way to not not accept the transfer */
+			transmit_response_reliable(p, "400 Bad request", req);	/* The best way to not accept the transfer */
 			error = 1;
 		}
 
@@ -26311,6 +26663,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 					ast_log(LOG_NOTICE, "Call from '%s' (%s) to extension"
 						" '%s' rejected because extension not found in context '%s'.\n",
 						S_OR(p->username, p->peername), ast_sockaddr_stringify(&p->recv), decoded_exten, p->context);
+					sip_report_failed_acl(p, "no_extension_match");
 				}
 				break;
 			case SIP_GET_DEST_REFUSED:
@@ -26332,7 +26685,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 
 			make_our_tag(p);
 
-			if (handle_request_invite_st(p, req, required, reinvite)) {
+			if (handle_request_invite_st(p, req, reinvite)) {
 				p->invitestate = INV_COMPLETED;
 				sip_scheddestroy(p, DEFAULT_TRANS_TIMEOUT);
 				res = INV_REQ_ERROR;
@@ -26374,7 +26727,7 @@ static int handle_request_invite(struct sip_pvt *p, struct sip_request *req, str
 		if (!req->ignore)
 			reinvite = 1;
 
-		if (handle_request_invite_st(p, req, required, reinvite)) {
+		if (handle_request_invite_st(p, req, reinvite)) {
 			p->invitestate = INV_COMPLETED;
 			if (!p->lastinvite) {
 				sip_scheddestroy(p, DEFAULT_TRANS_TIMEOUT);
@@ -28362,7 +28715,13 @@ static int handle_request_subscribe(struct sip_pvt *p, struct sip_request *req, 
 		p->lastinvite = seqno;
 	}
 	if (!p->needdestroy) {
-		p->expiry = atoi(sip_get_header(req, "Expires"));
+		const char *expires_str = sip_get_header(req, "Expires");
+
+		if (ast_strlen_zero(expires_str)) {
+			p->expiry = default_expiry;
+		} else {
+			p->expiry = atoi(expires_str);
+		}
 
 		/* check if the requested expiry-time is within the approved limits from sip.conf */
 		if (p->expiry > max_subexpiry) {
@@ -28841,7 +29200,7 @@ static int handle_incoming(struct sip_pvt *p, struct sip_request *req, struct as
 					return -1;
 				}
 				if (ast_test_flag(&p->flags[0], SIP_DIRECT_MEDIA)) {
-					ast_queue_control(p->owner, AST_CONTROL_SRCCHANGE);
+					ast_queue_control(p->owner, AST_CONTROL_UPDATE_RTP_PEER);
 				}
 			}
 			sched_check_pendings(p);
@@ -29091,9 +29450,8 @@ static int sip_prepare_socket(struct sip_pvt *p)
 		return s->fd;
 	}
 	if ((s->type & (AST_TRANSPORT_TCP | AST_TRANSPORT_TLS)) &&
-			(s->tcptls_session) &&
-			(s->tcptls_session->fd != -1)) {
-		return s->tcptls_session->fd;
+			s->tcptls_session && s->tcptls_session->stream) {
+		return ast_iostream_get_fd(s->tcptls_session->stream);
 	}
 	if ((s->type & (AST_TRANSPORT_WS | AST_TRANSPORT_WSS))) {
 		return s->ws_session ? ast_websocket_fd(s->ws_session) : -1;
@@ -29123,7 +29481,7 @@ static int sip_prepare_socket(struct sip_pvt *p)
 	/* 1.  check for existing threads */
 	ast_sockaddr_copy(&sa_tmp, sip_real_dst(p));
 	if ((tcptls_session = sip_tcp_locate(&sa_tmp))) {
-		s->fd = tcptls_session->fd;
+		s->fd = ast_iostream_get_fd(tcptls_session->stream);
 		if (s->tcptls_session) {
 			ao2_ref(s->tcptls_session, -1);
 			s->tcptls_session = NULL;
@@ -29165,12 +29523,23 @@ static int sip_prepare_socket(struct sip_pvt *p)
 		}
 	}
 
+	/* If a bind address has been specified, use it */
+	if ((s->type == AST_TRANSPORT_TLS) && !ast_sockaddr_isnull(&sip_tls_desc.local_address)) {
+		ca->local_address = sip_tls_desc.local_address;
+	}
+	else if ((s->type == AST_TRANSPORT_TCP) && !ast_sockaddr_isnull(&sip_tcp_desc.local_address)) {
+		ca->local_address = sip_tcp_desc.local_address;
+	}
+	/* Reset tcp source port to zero to let system pick a random one */
+	if (!ast_sockaddr_isnull(&ca->local_address)) {
+		ast_sockaddr_set_port(&ca->local_address, 0);
+	}
 	/* Create a client connection for address, this does not start the connection, just sets it up. */
 	if (!(s->tcptls_session = ast_tcptls_client_create(ca))) {
 		goto create_tcptls_session_fail;
 	}
 
-	s->fd = s->tcptls_session->fd;
+	s->fd = ast_iostream_get_fd(s->tcptls_session->stream);
 
 	/* client connections need to have the sip_threadinfo object created before
 	 * the thread is detached.  This ensures the alert_pipe is up before it will
@@ -29960,6 +30329,7 @@ static int sip_send_keepalive(const void *data)
 	struct sip_peer *peer = (struct sip_peer*) data;
 	int res = 0;
 	const char keepalive[] = "\r\n";
+	size_t count = sizeof(keepalive) - 1;
 
 	peer->keepalivesend = -1;
 
@@ -29970,13 +30340,12 @@ static int sip_send_keepalive(const void *data)
 
 	/* Send the packet out using the proper method for this peer */
 	if ((peer->socket.fd != -1) && (peer->socket.type == AST_TRANSPORT_UDP)) {
-		res = ast_sendto(peer->socket.fd, keepalive, sizeof(keepalive), 0, &peer->addr);
+		res = ast_sendto(peer->socket.fd, keepalive, count, 0, &peer->addr);
 	} else if ((peer->socket.type & (AST_TRANSPORT_TCP | AST_TRANSPORT_TLS)) &&
-		   (peer->socket.tcptls_session) &&
-		   (peer->socket.tcptls_session->fd != -1)) {
-		res = sip_tcptls_write(peer->socket.tcptls_session, keepalive, sizeof(keepalive));
+		   peer->socket.tcptls_session) {
+		res = sip_tcptls_write(peer->socket.tcptls_session, keepalive, count);
 	} else if (peer->socket.type == AST_TRANSPORT_UDP) {
-		res = ast_sendto(sipsock, keepalive, sizeof(keepalive), 0, &peer->addr);
+		res = ast_sendto(sipsock, keepalive, count, 0, &peer->addr);
 	}
 
 	if (res == -1) {
@@ -29990,7 +30359,7 @@ static int sip_send_keepalive(const void *data)
 		}
 	}
 
-	if (res != sizeof(keepalive)) {
+	if (res != count) {
 		ast_log(LOG_WARNING, "sip_send_keepalive to %s returned %d: %s\n", ast_sockaddr_stringify(&peer->addr), res, strerror(errno));
 	}
 
@@ -30390,6 +30759,14 @@ static struct ast_channel *sip_request_call(const char *type, struct ast_format_
 		}
 	}
 
+	/* If stripping the DNID left us with nothing, bail out */
+	if (ast_strlen_zero(tmp)) {
+		dialog_unlink_all(p);
+		dialog_unref(p, "unref dialog p from bad destination");
+		*cause = AST_CAUSE_DESTINATION_OUT_OF_ORDER;
+		return NULL;
+	}
+
 	/* Divvy up the items separated by slashes */
 	AST_NONSTANDARD_APP_ARGS(args, tmp, '/');
 
@@ -30472,9 +30849,10 @@ static struct ast_channel *sip_request_call(const char *type, struct ast_format_
 	if (p->relatedpeer) {
 
 		if (!ast_strlen_zero(p->relatedpeer->fullcontact) && !p->natdetected &&
-			(ast_test_flag(&p->flags[2], SIP_PAGE3_NAT_AUTO_RPORT) && !ast_test_flag(&p->flags[0], SIP_NAT_FORCE_RPORT))) {
+		    ((ast_test_flag(&p->flags[2], SIP_PAGE3_NAT_AUTO_RPORT) && !ast_test_flag(&p->flags[0], SIP_NAT_FORCE_RPORT)) ||
+		     (ast_test_flag(&p->flags[2], SIP_PAGE3_NAT_AUTO_COMEDIA) && !ast_test_flag(&p->flags[1], SIP_PAGE2_SYMMETRICRTP)))) {
 			/* We need to make an attempt to determine if a peer is behind NAT
-			   if the peer has the auto_force_rport flag set. */
+			   if the peer has the flags auto_force_rport or auto_comedia set. */
 			struct ast_sockaddr tmpaddr;
 
 			__set_address_from_contact(p->relatedpeer->fullcontact, &tmpaddr, 0);
@@ -30758,6 +31136,9 @@ static int handle_common_options(struct ast_flags *flags, struct ast_flags *mask
 	} else if (!strcasecmp(v->name, "buggymwi")) {
 		ast_set_flag(&mask[1], SIP_PAGE2_BUGGY_MWI);
 		ast_set2_flag(&flags[1], ast_true(v->value), SIP_PAGE2_BUGGY_MWI);
+	} else if (!strcasecmp(v->name, "rtcp_mux")) {
+		ast_set_flag(&mask[2], SIP_PAGE3_RTCP_MUX);
+		ast_set2_flag(&flags[2], ast_true(v->value), SIP_PAGE3_RTCP_MUX);
 	} else
 		res = 0;
 
@@ -31616,6 +31997,14 @@ static struct sip_peer *build_peer(const char *name, struct ast_variable *v_head
 				ast_rtp_dtls_cfg_parse(&peer->dtls_cfg, v->name, v->value);
 			}
 		}
+
+		/* Validate DTLS configuration */
+		if (ast_rtp_dtls_cfg_validate(&peer->dtls_cfg)) {
+			sip_unref_peer(peer, "Removing peer due to bad DTLS configuration");
+			return NULL;
+		}
+
+		/* SRB */
 
 		/* Apply the encryption tag length to the DTLS configuration, in case DTLS is in use */
 		peer->dtls_cfg.suite = (ast_test_flag(&peer->flags[2], SIP_PAGE3_SRTP_TAG_32) ? AST_AES_CM_128_HMAC_SHA1_32 : AST_AES_CM_128_HMAC_SHA1_80);
@@ -32594,7 +32983,7 @@ static int reload_config(enum channelreloadreason reason)
 			externexpire = 0;
 		} else if (!strcasecmp(v->name, "externhost")) {
 			ast_copy_string(externhost, v->value, sizeof(externhost));
-			if (ast_sockaddr_resolve_first(&externaddr, externhost, 0)) {
+			if (ast_sockaddr_resolve_first_af(&externaddr, externhost, 0, AST_AF_INET)) {
 				ast_log(LOG_WARNING, "Invalid address for externhost keyword: %s\n", externhost);
 			}
 			externexpire = time(NULL);
@@ -32814,6 +33203,11 @@ static int reload_config(enum channelreloadreason reason)
 		} else if (!strcasecmp(v->name, "websocket_enabled")) {
 			sip_cfg.websocket_enabled = ast_true(v->value);
 		}
+	}
+
+	/* Validate DTLS configuration */
+	if (ast_rtp_dtls_cfg_validate(&default_dtls_cfg)) {
+		return -1;
 	}
 
 	/* Override global defaults if setting found in general section */
@@ -33126,17 +33520,17 @@ static int reload_config(enum channelreloadreason reason)
 
 		/* If TCP is running on a different IP than UDP, then add it too */
 		if (!ast_sockaddr_isnull(&sip_tcp_desc.local_address) &&
-		    !ast_sockaddr_cmp(&bindaddr, &sip_tcp_desc.local_address)) {
+		    ast_sockaddr_cmp_addr(&bindaddr, &sip_tcp_desc.local_address)) {
 			add_sip_domain(ast_sockaddr_stringify_addr(&sip_tcp_desc.local_address),
 				       SIP_DOMAIN_AUTO, NULL);
 		}
 
 		/* If TLS is running on a different IP than UDP and TCP, then add that too */
 		if (!ast_sockaddr_isnull(&sip_tls_desc.local_address) &&
-		    !ast_sockaddr_cmp(&bindaddr, &sip_tls_desc.local_address) &&
-		    !ast_sockaddr_cmp(&sip_tcp_desc.local_address,
+		    ast_sockaddr_cmp_addr(&bindaddr, &sip_tls_desc.local_address) &&
+		    ast_sockaddr_cmp_addr(&sip_tcp_desc.local_address,
 				      &sip_tls_desc.local_address)) {
-			add_sip_domain(ast_sockaddr_stringify_addr(&sip_tcp_desc.local_address),
+			add_sip_domain(ast_sockaddr_stringify_addr(&sip_tls_desc.local_address),
 				       SIP_DOMAIN_AUTO, NULL);
 		}
 
@@ -33389,9 +33783,9 @@ static int sip_set_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance *i
 
 		if (p->rtp) {
 			/* Prevent audio RTCP reads */
-			ast_channel_set_fd(chan, 1, -1);
+			ast_channel_set_fd(chan, SIP_AUDIO_RTCP_FD, -1);
 			/* Silence RTCP while audio RTP is inactive */
-			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, 0);
+			ast_rtp_instance_set_prop(p->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_DISABLED);
 		}
 	} else if (!ast_sockaddr_isnull(&p->redirip)) {
 		memset(&p->redirip, 0, sizeof(p->redirip));
@@ -33403,9 +33797,9 @@ static int sip_set_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance *i
 
 		if (p->vrtp) {
 			/* Prevent video RTCP reads */
-			ast_channel_set_fd(chan, 3, -1);
+			ast_channel_set_fd(chan, SIP_VIDEO_RTCP_FD, -1);
 			/* Silence RTCP while video RTP is inactive */
-			ast_rtp_instance_set_prop(p->vrtp, AST_RTP_PROPERTY_RTCP, 0);
+			ast_rtp_instance_set_prop(p->vrtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_DISABLED);
 		}
 	} else if (!ast_sockaddr_isnull(&p->vredirip)) {
 		memset(&p->vredirip, 0, sizeof(p->vredirip));
@@ -33414,9 +33808,9 @@ static int sip_set_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance *i
 		if (p->vrtp) {
 			/* Enable RTCP since it will be inactive if we're coming back
 			 * from a reinvite */
-			ast_rtp_instance_set_prop(p->vrtp, AST_RTP_PROPERTY_RTCP, 1);
+			ast_rtp_instance_set_prop(p->vrtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 			/* Enable video RTCP reads */
-			ast_channel_set_fd(chan, 3, ast_rtp_instance_fd(p->vrtp, 1));
+			ast_channel_set_fd(chan, SIP_VIDEO_RTCP_FD, ast_rtp_instance_fd(p->vrtp, 1));
 		}
 	}
 
@@ -33464,9 +33858,7 @@ static int sip_set_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance *i
 
 static void sip_get_codec(struct ast_channel *chan, struct ast_format_cap *result)
 {
-	struct sip_pvt *p = ast_channel_tech_pvt(chan);
-
-	ast_format_cap_append_from_cap(result, !ast_format_cap_count(p->peercaps) ? p->caps : p->peercaps, AST_MEDIA_TYPE_UNKNOWN);
+	ast_format_cap_append_from_cap(result, ast_channel_nativeformats(chan), AST_MEDIA_TYPE_UNKNOWN);
 }
 
 static struct ast_rtp_glue sip_rtp_glue = {
@@ -33994,7 +34386,7 @@ static int peer_cmp_cb(void *obj, void *arg, int flags)
 }
 
 /*!
- * Hash function based on the the peer's ip address.  For IPv6, we use the end
+ * Hash function based on the peer's ip address.  For IPv6, we use the end
  * of the address.
  * \todo Find a better hashing function
  */
@@ -34378,75 +34770,6 @@ AST_TEST_DEFINE(test_sip_mwi_subscribe_parse)
 		res = AST_TEST_FAIL;
 	}
 	return res;
-}
-
-AST_TEST_DEFINE(test_sip_peers_get)
-{
-	struct sip_peer *peer;
-	struct ast_data *node;
-	struct ast_data_query query = {
-		.path = "/asterisk/channel/sip/peers",
-		.search = "peers/peer/name=test_peer_data_provider"
-	};
-
-	switch (cmd) {
-		case TEST_INIT:
-			info->name = "sip_peers_get_data_test";
-			info->category = "/main/data/sip/peers/";
-			info->summary = "SIP peers data providers unit test";
-			info->description =
-				"Tests whether the SIP peers data provider implementation works as expected.";
-			return AST_TEST_NOT_RUN;
-		case TEST_EXECUTE:
-			break;
-	}
-
-	/* Create the peer that we will retrieve. */
-	peer = build_peer("test_peer_data_provider", NULL, NULL, 0, 0);
-	if (!peer) {
-		return AST_TEST_FAIL;
-	}
-	peer->type = SIP_TYPE_USER;
-	peer->call_limit = 10;
-	ao2_link(peers, peer);
-
-	/* retrieve the chan_sip/peers tree and check the created peer. */
-	node = ast_data_get(&query);
-	if (!node) {
-		ao2_unlink(peers, peer);
-		ao2_ref(peer, -1);
-		return AST_TEST_FAIL;
-	}
-
-	/* compare item. */
-	if (strcmp(ast_data_retrieve_string(node, "peer/name"), "test_peer_data_provider")) {
-		ao2_unlink(peers, peer);
-		ao2_ref(peer, -1);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	if (strcmp(ast_data_retrieve_string(node, "peer/type"), "user")) {
-		ao2_unlink(peers, peer);
-		ao2_ref(peer, -1);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	if (ast_data_retrieve_int(node, "peer/call_limit") != 10) {
-		ao2_unlink(peers, peer);
-		ao2_ref(peer, -1);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	/* release resources */
-	ast_data_free(node);
-
-	ao2_unlink(peers, peer);
-	ao2_ref(peer, -1);
-
-	return AST_TEST_PASS;
 }
 
 /*!
@@ -34980,170 +35303,6 @@ AST_TEST_DEFINE(get_in_brackets_const_test)
 
 #endif
 
-#define DATA_EXPORT_SIP_PEER(MEMBER)				\
-	MEMBER(sip_peer, name, AST_DATA_STRING)			\
-	MEMBER(sip_peer, secret, AST_DATA_PASSWORD)		\
-	MEMBER(sip_peer, md5secret, AST_DATA_PASSWORD)		\
-	MEMBER(sip_peer, remotesecret, AST_DATA_PASSWORD)	\
-	MEMBER(sip_peer, context, AST_DATA_STRING)		\
-	MEMBER(sip_peer, subscribecontext, AST_DATA_STRING)	\
-	MEMBER(sip_peer, username, AST_DATA_STRING)		\
-	MEMBER(sip_peer, accountcode, AST_DATA_STRING)		\
-	MEMBER(sip_peer, tohost, AST_DATA_STRING)		\
-	MEMBER(sip_peer, regexten, AST_DATA_STRING)		\
-	MEMBER(sip_peer, fromuser, AST_DATA_STRING)		\
-	MEMBER(sip_peer, fromdomain, AST_DATA_STRING)		\
-	MEMBER(sip_peer, fullcontact, AST_DATA_STRING)		\
-	MEMBER(sip_peer, cid_num, AST_DATA_STRING)		\
-	MEMBER(sip_peer, cid_name, AST_DATA_STRING)		\
-	MEMBER(sip_peer, vmexten, AST_DATA_STRING)		\
-	MEMBER(sip_peer, language, AST_DATA_STRING)		\
-	MEMBER(sip_peer, mohinterpret, AST_DATA_STRING)		\
-	MEMBER(sip_peer, mohsuggest, AST_DATA_STRING)		\
-	MEMBER(sip_peer, parkinglot, AST_DATA_STRING)		\
-	MEMBER(sip_peer, useragent, AST_DATA_STRING)		\
-	MEMBER(sip_peer, mwi_from, AST_DATA_STRING)		\
-	MEMBER(sip_peer, engine, AST_DATA_STRING)		\
-	MEMBER(sip_peer, unsolicited_mailbox, AST_DATA_STRING)	\
-	MEMBER(sip_peer, is_realtime, AST_DATA_BOOLEAN)		\
-	MEMBER(sip_peer, host_dynamic, AST_DATA_BOOLEAN)	\
-	MEMBER(sip_peer, autoframing, AST_DATA_BOOLEAN)		\
-	MEMBER(sip_peer, inuse, AST_DATA_INTEGER)		\
-	MEMBER(sip_peer, ringing, AST_DATA_INTEGER)		\
-	MEMBER(sip_peer, onhold, AST_DATA_INTEGER)		\
-	MEMBER(sip_peer, call_limit, AST_DATA_INTEGER)		\
-	MEMBER(sip_peer, t38_maxdatagram, AST_DATA_INTEGER)	\
-	MEMBER(sip_peer, maxcallbitrate, AST_DATA_INTEGER)	\
-	MEMBER(sip_peer, rtptimeout, AST_DATA_SECONDS)		\
-	MEMBER(sip_peer, rtpholdtimeout, AST_DATA_SECONDS)	\
-	MEMBER(sip_peer, rtpkeepalive, AST_DATA_SECONDS)	\
-	MEMBER(sip_peer, lastms, AST_DATA_MILLISECONDS)		\
-	MEMBER(sip_peer, maxms, AST_DATA_MILLISECONDS)		\
-	MEMBER(sip_peer, qualifyfreq, AST_DATA_MILLISECONDS)	\
-	MEMBER(sip_peer, timer_t1, AST_DATA_MILLISECONDS)	\
-	MEMBER(sip_peer, timer_b, AST_DATA_MILLISECONDS)	\
-	MEMBER(sip_peer, description, AST_DATA_STRING)
-
-AST_DATA_STRUCTURE(sip_peer, DATA_EXPORT_SIP_PEER);
-
-static int peers_data_provider_get(const struct ast_data_search *search,
-	struct ast_data *data_root)
-{
-	struct sip_peer *peer;
-	struct ao2_iterator i;
-	struct ast_data *data_peer, *data_peer_mailboxes = NULL, *data_peer_mailbox, *enum_node;
-	struct ast_data *data_sip_options;
-	int total_mailboxes, x;
-	struct sip_mailbox *mailbox;
-
-	i = ao2_iterator_init(peers, 0);
-	while ((peer = ao2_iterator_next(&i))) {
-		ao2_lock(peer);
-
-		data_peer = ast_data_add_node(data_root, "peer");
-		if (!data_peer) {
-			ao2_unlock(peer);
-			ao2_ref(peer, -1);
-			continue;
-		}
-
-		ast_data_add_structure(sip_peer, data_peer, peer);
-
-		/* transfer mode */
-		enum_node = ast_data_add_node(data_peer, "allowtransfer");
-		if (!enum_node) {
-			ao2_unlock(peer);
-			ao2_ref(peer, -1);
-			continue;
-		}
-		ast_data_add_str(enum_node, "text", transfermode2str(peer->allowtransfer));
-		ast_data_add_int(enum_node, "value", peer->allowtransfer);
-
-		/* transports */
-		ast_data_add_str(data_peer, "transports", get_transport_list(peer->transports));
-
-		/* peer type */
-		if ((peer->type & SIP_TYPE_USER) && (peer->type & SIP_TYPE_PEER)) {
-			ast_data_add_str(data_peer, "type", "friend");
-		} else if (peer->type & SIP_TYPE_PEER) {
-			ast_data_add_str(data_peer, "type", "peer");
-		} else if (peer->type & SIP_TYPE_USER) {
-			ast_data_add_str(data_peer, "type", "user");
-		}
-
-		/* mailboxes */
-		total_mailboxes = 0;
-		AST_LIST_TRAVERSE(&peer->mailboxes, mailbox, entry) {
-			if (!total_mailboxes) {
-				data_peer_mailboxes = ast_data_add_node(data_peer, "mailboxes");
-				if (!data_peer_mailboxes) {
-					break;
-				}
-				total_mailboxes++;
-			}
-
-			data_peer_mailbox = ast_data_add_node(data_peer_mailboxes, "mailbox");
-			if (!data_peer_mailbox) {
-				continue;
-			}
-			ast_data_add_str(data_peer_mailbox, "id", mailbox->id);
-		}
-
-		/* amaflags */
-		enum_node = ast_data_add_node(data_peer, "amaflags");
-		if (!enum_node) {
-			ao2_unlock(peer);
-			ao2_ref(peer, -1);
-			continue;
-		}
-		ast_data_add_int(enum_node, "value", peer->amaflags);
-		ast_data_add_str(enum_node, "text", ast_channel_amaflags2string(peer->amaflags));
-
-		/* sip options */
-		data_sip_options = ast_data_add_node(data_peer, "sipoptions");
-		if (!data_sip_options) {
-			ao2_unlock(peer);
-			ao2_ref(peer, -1);
-			continue;
-		}
-		for (x = 0 ; x < ARRAY_LEN(sip_options); x++) {
-			ast_data_add_bool(data_sip_options, sip_options[x].text, peer->sipoptions & sip_options[x].id);
-		}
-
-		/* callingpres */
-		enum_node = ast_data_add_node(data_peer, "callingpres");
-		if (!enum_node) {
-			ao2_unlock(peer);
-			ao2_ref(peer, -1);
-			continue;
-		}
-		ast_data_add_int(enum_node, "value", peer->callingpres);
-		ast_data_add_str(enum_node, "text", ast_describe_caller_presentation(peer->callingpres));
-
-		/* codecs */
-		ast_data_add_codecs(data_peer, "codecs", peer->caps);
-
-		if (!ast_data_search_match(search, data_peer)) {
-			ast_data_remove_node(data_root, data_peer);
-		}
-
-		ao2_unlock(peer);
-		ao2_ref(peer, -1);
-	}
-	ao2_iterator_destroy(&i);
-
-	return 0;
-}
-
-static const struct ast_data_handler peers_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = peers_data_provider_get
-};
-
-static const struct ast_data_entry sip_data_providers[] = {
-	AST_DATA_ENTRY("asterisk/channel/sip/peers", &peers_data_provider),
-};
-
 static const struct ast_sip_api_tech chan_sip_api_provider = {
 	.version = AST_SIP_API_VERSION,
 	.name = "chan_sip",
@@ -35167,20 +35326,24 @@ static int load_module(void)
 	struct sip_peer *bogus_peer;
 
 	ast_verbose("SIP channel loading...\n");
+	log_level = ast_logger_register_level("SIP_HISTORY");
+	if (log_level < 0) {
+		ast_log(LOG_WARNING, "Unable to register history log level\n");
+	}
 
 	if (STASIS_MESSAGE_TYPE_INIT(session_timeout_type)) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(sip_tech.capabilities = ast_format_cap_alloc(0))) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (ast_sip_api_provider_register(&chan_sip_api_provider)) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	/* the fact that ao2_containers can't resize automatically is a major worry! */
@@ -35195,12 +35358,12 @@ static int load_module(void)
 		|| !threadt) {
 		ast_log(LOG_ERROR, "Unable to create primary SIP container(s)\n");
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(sip_cfg.caps = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append_by_type(sip_tech.capabilities, AST_MEDIA_TYPE_AUDIO);
 
@@ -35211,13 +35374,13 @@ static int load_module(void)
 	if (!(sched = ast_sched_context_create())) {
 		ast_log(LOG_ERROR, "Unable to create scheduler context\n");
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(io = io_context_create())) {
 		ast_log(LOG_ERROR, "Unable to create I/O context\n");
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	sip_reloadreason = CHANNEL_MODULE_LOAD;
@@ -35232,7 +35395,7 @@ static int load_module(void)
 	if (!(bogus_peer = temp_peer("(bogus_peer)"))) {
 		ast_log(LOG_ERROR, "Unable to create bogus_peer for authentication\n");
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	/* Make sure the auth will always fail. */
 	ast_string_field_set(bogus_peer, md5secret, BOGUS_PEER_MD5SECRET);
@@ -35249,25 +35412,21 @@ static int load_module(void)
 
 	if (ast_msg_tech_register(&sip_msg_tech)) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	/* Make sure we can register our sip channel type */
 	if (ast_channel_register(&sip_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel type 'SIP'\n");
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 #ifdef TEST_FRAMEWORK
-	AST_TEST_REGISTER(test_sip_peers_get);
 	AST_TEST_REGISTER(test_sip_mwi_subscribe_parse);
 	AST_TEST_REGISTER(test_tcp_message_fragmentation);
 	AST_TEST_REGISTER(get_in_brackets_const_test);
 #endif
-
-	/* Register AstData providers */
-	ast_data_register_multiple(sip_data_providers, ARRAY_LEN(sip_data_providers));
 
 	/* Register all CLI functions for SIP */
 	ast_cli_register_multiple(cli_sip, ARRAY_LEN(cli_sip));
@@ -35285,6 +35444,7 @@ static int load_module(void)
 
 	/* Register dialplan functions */
 	ast_custom_function_register(&sip_header_function);
+	ast_custom_function_register(&sip_headers_function);
 	ast_custom_function_register(&sippeer_function);
 	ast_custom_function_register(&checksipdomain_function);
 
@@ -35366,6 +35526,8 @@ static int unload_module(void)
 	struct ao2_iterator i;
 	struct timeval start;
 
+	ast_sched_dump(sched);
+
 	ast_sip_api_provider_unregister();
 
 	if (sip_cfg.websocket_enabled) {
@@ -35375,15 +35537,15 @@ static int unload_module(void)
 	network_change_stasis_unsubscribe();
 	acl_change_event_stasis_unsubscribe();
 
-	ast_sched_dump(sched);
-
 	/* First, take us out of the channel type list */
 	ast_channel_unregister(&sip_tech);
-
 	ast_msg_tech_unregister(&sip_msg_tech);
+	ast_cc_monitor_unregister(&sip_cc_monitor_callbacks);
+	ast_cc_agent_unregister(&sip_cc_agent_callbacks);
 
 	/* Unregister dial plan functions */
 	ast_custom_function_unregister(&sippeer_function);
+	ast_custom_function_unregister(&sip_headers_function);
 	ast_custom_function_unregister(&sip_header_function);
 	ast_custom_function_unregister(&checksipdomain_function);
 
@@ -35394,14 +35556,10 @@ static int unload_module(void)
 #ifdef TEST_FRAMEWORK
 	ast_unregister_application(app_sipsendcustominfo);
 
-	AST_TEST_UNREGISTER(test_sip_peers_get);
 	AST_TEST_UNREGISTER(test_sip_mwi_subscribe_parse);
 	AST_TEST_UNREGISTER(test_tcp_message_fragmentation);
 	AST_TEST_UNREGISTER(get_in_brackets_const_test);
 #endif
-	/* Unregister all the AstData providers */
-	ast_data_unregister(NULL);
-
 	/* Unregister CLI commands */
 	ast_cli_unregister_multiple(cli_sip, ARRAY_LEN(cli_sip));
 
@@ -35444,8 +35602,6 @@ static int unload_module(void)
 	}
 	ao2_iterator_destroy(&i);
 
-	unlink_all_peers_from_tables();
-
 	ast_mutex_lock(&monlock);
 	if (monitor_thread && (monitor_thread != AST_PTHREADT_STOP) && (monitor_thread != AST_PTHREADT_NULL)) {
 		pthread_t th = monitor_thread;
@@ -35459,7 +35615,12 @@ static int unload_module(void)
 		ast_mutex_unlock(&monlock);
 	}
 
+	/* Clear containers */
+	unlink_all_peers_from_tables();
 	cleanup_all_regs();
+	sip_epa_unregister_all();
+	destroy_escs();
+	clear_sip_domains();
 
 	{
 		struct ao2_iterator iter;
@@ -35488,27 +35649,6 @@ static int unload_module(void)
 	 */
 	ast_sched_runq(sched);
 
-	/* Free memory for local network address mask */
-	ast_free_ha(localaddr);
-
-	ast_mutex_lock(&authl_lock);
-	if (authl) {
-		ao2_t_cleanup(authl, "Removing global authentication");
-		authl = NULL;
-	}
-	ast_mutex_unlock(&authl_lock);
-
-	sip_epa_unregister_all();
-	destroy_escs();
-
-	ast_free(default_tls_cfg.certfile);
-	ast_free(default_tls_cfg.pvtfile);
-	ast_free(default_tls_cfg.cipher);
-	ast_free(default_tls_cfg.cafile);
-	ast_free(default_tls_cfg.capath);
-
-	ast_rtp_dtls_cfg_free(&default_dtls_cfg);
-
 	/*
 	 * Wait awhile for the TCP/TLS thread container to become empty.
 	 *
@@ -35522,7 +35662,27 @@ static int unload_module(void)
 	}
 	if (ao2_container_count(threadt)) {
 		ast_debug(2, "TCP/TLS thread container did not become empty :(\n");
+
+		return -1;
 	}
+
+	/* Free memory for local network address mask */
+	ast_free_ha(localaddr);
+
+	ast_mutex_lock(&authl_lock);
+	if (authl) {
+		ao2_t_cleanup(authl, "Removing global authentication");
+		authl = NULL;
+	}
+	ast_mutex_unlock(&authl_lock);
+
+	ast_free(default_tls_cfg.certfile);
+	ast_free(default_tls_cfg.pvtfile);
+	ast_free(default_tls_cfg.cipher);
+	ast_free(default_tls_cfg.cafile);
+	ast_free(default_tls_cfg.capath);
+
+	ast_rtp_dtls_cfg_free(&default_dtls_cfg);
 
 	ao2_cleanup(registry_list);
 	ao2_cleanup(subscription_mwi_list);
@@ -35537,7 +35697,6 @@ static int unload_module(void)
 	ao2_t_cleanup(threadt, "unref the thread table");
 	ao2_t_cleanup(sip_monitor_instances, "unref the sip_monitor_instances table");
 
-	clear_sip_domains();
 	sip_cfg.contact_acl = ast_free_acl_list(sip_cfg.contact_acl);
 	if (sipsock_read_id) {
 		ast_io_remove(io, sipsock_read_id);
@@ -35550,8 +35709,6 @@ static int unload_module(void)
 	ast_context_destroy_by_name(used_context, "SIP");
 	ast_unload_realtime("sipregs");
 	ast_unload_realtime("sippeers");
-	ast_cc_monitor_unregister(&sip_cc_monitor_callbacks);
-	ast_cc_agent_unregister(&sip_cc_agent_callbacks);
 
 	sip_reqresp_parser_exit();
 	sip_unregister_tests();
@@ -35567,6 +35724,9 @@ static int unload_module(void)
 	sip_cfg.caps = NULL;
 
 	STASIS_MESSAGE_TYPE_CLEANUP(session_timeout_type);
+	if (log_level != -1) {
+		ast_logger_unregister_level("SIP_HISTORY");
+	}
 
 	return 0;
 }
@@ -35577,5 +35737,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Session Initiation Pr
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
-	.nonoptreq = "res_crypto,res_http_websocket",
+	.optional_modules = "res_crypto,res_http_websocket",
 );

@@ -61,6 +61,8 @@ struct refer_progress {
 	char *transferee;
 	/*! \brief Non-zero if the 100 notify has been sent */
 	int sent_100;
+	/*! \brief Whether to notifies all the progress details on blind transfer */
+	unsigned int refer_blind_progress;
 };
 
 /*! \brief REFER Progress notification structure */
@@ -372,6 +374,8 @@ static int refer_progress_alloc(struct ast_sip_session *session, pjsip_rx_data *
 	ast_debug(3, "Created progress monitor '%p' for transfer occurring from channel '%s' and endpoint '%s'\n",
 		progress, ast_channel_name(session->channel), ast_sorcery_object_get_id(session->endpoint));
 
+	(*progress)->refer_blind_progress = session->endpoint->refer_blind_progress;
+
 	(*progress)->framehook = -1;
 
 	/* To prevent a potential deadlock we need the dialog so we can lock/unlock */
@@ -539,6 +543,7 @@ static int refer_attended_task(void *data)
 		}
 	}
 
+	ast_sip_session_end_if_deferred(attended->transferer);
 	if (response != 200) {
 		if (!ast_sip_push_task(attended->transferer->serializer,
 			defer_termination_cancel, attended->transferer)) {
@@ -563,6 +568,8 @@ struct refer_blind {
 	pjsip_replaces_hdr *replaces;
 	/*! \brief Optional Refer-To header */
 	pjsip_sip_uri *refer_to;
+	/*! \brief Attended transfer flag */
+	unsigned int attended:1;
 };
 
 /*! \brief Blind transfer callback function */
@@ -573,11 +580,20 @@ static void refer_blind_callback(struct ast_channel *chan, struct transfer_chann
 	pjsip_generic_string_hdr *referred_by;
 
 	static const pj_str_t str_referred_by = { "Referred-By", 11 };
+	static const pj_str_t str_referred_by_s = { "b", 1 };
 
 	pbx_builtin_setvar_helper(chan, "SIPTRANSFER", "yes");
 
-	/* If progress monitoring is being done attach a frame hook so we can monitor it */
-	if (refer->progress) {
+	if (refer->progress && !refer->attended && !refer->progress->refer_blind_progress) {
+		/* If blind transfer and endpoint doesn't want to receive all the progress details */
+		struct refer_progress_notification *notification = refer_progress_notification_alloc(refer->progress, 200,
+			PJSIP_EVSUB_STATE_TERMINATED);
+
+		if (notification) {
+			refer_progress_notify(notification);
+		}
+	} else if (refer->progress) {
+		/* If attended transfer and progress monitoring is being done attach a frame hook so we can monitor it */
 		struct ast_framehook_interface hook = {
 			.version = AST_FRAMEHOOK_INTERFACE_VERSION,
 			.event_cb = refer_progress_framehook,
@@ -651,8 +667,8 @@ static void refer_blind_callback(struct ast_channel *chan, struct transfer_chann
 
 	pbx_builtin_setvar_helper(chan, "SIPREFERRINGCONTEXT", S_OR(refer->context, NULL));
 
-	referred_by = pjsip_msg_find_hdr_by_name(refer->rdata->msg_info.msg,
-		&str_referred_by, NULL);
+	referred_by = pjsip_msg_find_hdr_by_names(refer->rdata->msg_info.msg,
+		&str_referred_by, &str_referred_by_s, NULL);
 	if (referred_by) {
 		size_t uri_size = pj_strlen(&referred_by->hvalue) + 1;
 		char *uri = ast_alloca(uri_size);
@@ -757,6 +773,7 @@ static int refer_incoming_attended_request(struct ast_sip_session *session, pjsi
 
 		/* Push it to the other session, which will have both channels with minimal locking */
 		if (ast_sip_push_task(other_session->serializer, refer_attended_task, attended)) {
+			ast_sip_session_end_if_deferred(session);
 			ast_sip_session_defer_termination_cancel(session);
 			ao2_cleanup(attended);
 			return 500;
@@ -784,6 +801,7 @@ static int refer_incoming_attended_request(struct ast_sip_session *session, pjsi
 		refer.rdata = rdata;
 		refer.replaces = replaces;
 		refer.refer_to = target_uri;
+		refer.attended = 1;
 
 		if (ast_sip_session_defer_termination(session)) {
 			ast_log(LOG_ERROR, "Received REFER for remote session on channel '%s' from endpoint '%s' but could not defer termination, rejecting\n",
@@ -794,9 +812,12 @@ static int refer_incoming_attended_request(struct ast_sip_session *session, pjsi
 
 		response = xfer_response_code2sip(ast_bridge_transfer_blind(1, session->channel,
 			"external_replaces", context, refer_blind_callback, &refer));
+
+		ast_sip_session_end_if_deferred(session);
 		if (response != 200) {
 			ast_sip_session_defer_termination_cancel(session);
 		}
+
 		return response;
 	}
 }
@@ -821,6 +842,13 @@ static int refer_incoming_blind_request(struct ast_sip_session *session, pjsip_r
 	 */
 	AST_SIP_USER_OPTIONS_TRUNCATE_CHECK(exten);
 
+	/* Uri without exten */
+	if (ast_strlen_zero(exten)) {
+		ast_copy_string(exten, "s", sizeof(exten));
+		ast_debug(3, "Channel '%s' from endpoint '%s' attempted blind transfer to a target without extension. Target was set to 's@%s'\n",
+			ast_channel_name(session->channel), ast_sorcery_object_get_id(session->endpoint), context);
+	}
+
 	if (!ast_exists_extension(NULL, context, exten, 1, NULL)) {
 		ast_log(LOG_ERROR, "Channel '%s' from endpoint '%s' attempted blind transfer to '%s@%s' but target does not exist\n",
 			ast_channel_name(session->channel), ast_sorcery_object_get_id(session->endpoint), exten, context);
@@ -831,6 +859,7 @@ static int refer_incoming_blind_request(struct ast_sip_session *session, pjsip_r
 	refer.progress = progress;
 	refer.rdata = rdata;
 	refer.refer_to = target;
+	refer.attended = 0;
 
 	if (ast_sip_session_defer_termination(session)) {
 		ast_log(LOG_ERROR, "Channel '%s' from endpoint '%s' attempted blind transfer but could not defer termination, rejecting\n",
@@ -841,9 +870,12 @@ static int refer_incoming_blind_request(struct ast_sip_session *session, pjsip_r
 
 	response = xfer_response_code2sip(ast_bridge_transfer_blind(1, session->channel,
 		exten, context, refer_blind_callback, &refer));
+
+	ast_sip_session_end_if_deferred(session);
 	if (response != 200) {
 		ast_sip_session_defer_termination_cancel(session);
 	}
+
 	return response;
 }
 
@@ -1006,6 +1038,7 @@ static int refer_incoming_refer_request(struct ast_sip_session *session, struct 
 	int response;
 
 	static const pj_str_t str_refer_to = { "Refer-To", 8 };
+	static const pj_str_t str_refer_to_s = { "r", 1 };
 	static const pj_str_t str_replaces = { "Replaces", 8 };
 
 	if (!session->channel) {
@@ -1024,7 +1057,7 @@ static int refer_incoming_refer_request(struct ast_sip_session *session, struct 
 	}
 
 	/* A Refer-To header is required */
-	refer_to = pjsip_msg_find_hdr_by_name(rdata->msg_info.msg, &str_refer_to, NULL);
+	refer_to = pjsip_msg_find_hdr_by_names(rdata->msg_info.msg, &str_refer_to, &str_refer_to_s, NULL);
 	if (!refer_to) {
 		pjsip_dlg_respond(session->inv_session->dlg, rdata, 400, NULL, NULL, NULL);
 		ast_debug(3, "Received a REFER without Refer-To on channel '%s' from endpoint '%s'\n",
@@ -1169,14 +1202,14 @@ static int load_module(void)
 {
 	const pj_str_t str_norefersub = { "norefersub", 10 };
 
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
 	pjsip_replaces_init_module(ast_sip_get_pjsip_endpoint());
 	pjsip_xfer_init_module(ast_sip_get_pjsip_endpoint());
 	pjsip_endpt_add_capability(ast_sip_get_pjsip_endpoint(), NULL, PJSIP_H_SUPPORTED, NULL, 1, &str_norefersub);
 
 	ast_sip_register_service(&refer_progress_module);
 	ast_sip_session_register_supplement(&refer_supplement);
+
+	ast_module_shutdown_ref(ast_module_info->self);
 
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -1194,4 +1227,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Blind and Atten
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session,res_pjsip_pubsub",
 );

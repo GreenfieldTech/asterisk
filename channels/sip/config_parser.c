@@ -25,8 +25,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "include/sip.h"
 #include "include/config_parser.h"
 #include "include/sip_utils.h"
@@ -926,4 +924,3 @@ void sip_config_parser_unregister_tests(void)
 	AST_TEST_UNREGISTER(sip_parse_host_line_test);
 	AST_TEST_UNREGISTER(sip_parse_nat_test);
 }
-

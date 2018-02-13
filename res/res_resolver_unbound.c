@@ -23,8 +23,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <signal.h>
 #include <unbound.h>
 #include <arpa/nameser.h>
@@ -144,8 +142,8 @@ static struct aco_type global_option = {
 	.type = ACO_GLOBAL,
 	.name = "general",
 	.item_offset = offsetof(struct unbound_config, global),
-	.category_match = ACO_WHITELIST,
-	.category = "^general$",
+	.category_match = ACO_WHITELIST_EXACT,
+	.category = "general",
 };
 
 static struct aco_type *global_options[] = ACO_TYPES(&global_option);
@@ -288,13 +286,21 @@ static void unbound_resolver_callback(void *data, int err, struct ub_result *ub_
 	ub_resolve_free(ub_result);
 }
 
+static void unbound_resolver_data_dtor(void *vdoomed)
+{
+	struct unbound_resolver_data *doomed = vdoomed;
+
+	ao2_cleanup(doomed->resolver);
+}
+
 static int unbound_resolver_resolve(struct ast_dns_query *query)
 {
 	struct unbound_config *cfg = ao2_global_obj_ref(globals);
 	struct unbound_resolver_data *data;
 	int res;
 
-	data = ao2_alloc_options(sizeof(*data), NULL, AO2_ALLOC_OPT_LOCK_NOLOCK);
+	data = ao2_alloc_options(sizeof(*data), unbound_resolver_data_dtor,
+		AO2_ALLOC_OPT_LOCK_NOLOCK);
 	if (!data) {
 		ast_log(LOG_ERROR, "Failed to allocate resolver data for resolution of '%s'\n",
 			ast_dns_query_get_name(query));

@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 
 #include "asterisk/module.h"
@@ -127,8 +125,10 @@ ASTERISK_REGISTER_FILE()
 			</parameter>
 			<parameter name="from" required="false">
 				<para>A From URI for the message if needed for the
-				message technology being used to send this message.</para>
-				<xi:include xpointer="xpointer(/docs/info[@name='MessageFromInfo'])" />
+				message technology being used to send this message. This can be a
+				SIP(S) URI, such as <literal>Alice &lt;sip:alice@atlanta.com&gt;</literal>,
+				a string in the format <literal>alice@atlanta.com</literal>, or simply
+				a username such as <literal>alice</literal>.</para>
 			</parameter>
 		</syntax>
 		<description>
@@ -777,10 +777,19 @@ static void chan_cleanup(struct ast_channel *chan)
 	if (msg_ds) {
 		ast_channel_datastore_add(chan, msg_ds);
 	}
+
 	/*
 	 * Clear softhangup flags.
 	 */
 	ast_channel_clear_softhangup(chan, AST_SOFTHANGUP_ALL);
+
+	/*
+	 * Flush the alert pipe in case we miscounted somewhere when
+	 * messing with frames on the read queue, we had to flush the
+	 * read queue above, or we had an "Exceptionally long queue
+	 * length" event.
+	 */
+	ast_channel_internal_alert_flush(chan);
 
 	ast_channel_unlock(chan);
 }
@@ -1353,7 +1362,12 @@ int ast_msg_tech_register(const struct ast_msg_tech *tech)
 		return -1;
 	}
 
-	AST_VECTOR_APPEND(&msg_techs, tech);
+	if (AST_VECTOR_APPEND(&msg_techs, tech)) {
+		ast_log(LOG_ERROR, "Failed to register message technology for '%s'\n",
+		        tech->name);
+		ast_rwlock_unlock(&msg_techs_lock);
+		return -1;
+	}
 	ast_verb(3, "Message technology '%s' registered.\n", tech->name);
 
 	ast_rwlock_unlock(&msg_techs_lock);
@@ -1408,7 +1422,12 @@ int ast_msg_handler_register(const struct ast_msg_handler *handler)
 		return -1;
 	}
 
-	AST_VECTOR_APPEND(&msg_handlers, handler);
+	if (AST_VECTOR_APPEND(&msg_handlers, handler)) {
+		ast_log(LOG_ERROR, "Failed to register message handler for '%s'\n",
+		        handler->name);
+		ast_rwlock_unlock(&msg_handlers_lock);
+		return -1;
+	}
 	ast_verb(2, "Message handler '%s' registered.\n", handler->name);
 
 	ast_rwlock_unlock(&msg_handlers_lock);

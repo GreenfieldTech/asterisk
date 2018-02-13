@@ -37,13 +37,12 @@
  */
 
 /*** MODULEINFO
+	<defaultenabled>no</defaultenabled>
 	<depend>syslog</depend>
-	<support_level>core</support_level>
+	<support_level>deprecated</support_level>
 ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/lock.h"

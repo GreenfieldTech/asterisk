@@ -37,8 +37,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <netinet/in.h>
 #include <time.h>
 #include <ctype.h>
@@ -1000,7 +998,7 @@ static int ast_say_number_full_de(struct ast_channel *chan, int num, const char 
 
 /*! \brief  ast_say_number_full_en_GB: British syntax
  New files:
-  - In addition to American English, the following sounds are required:  "and"
+  - In addition to American English, the following sounds are required:  "vm-and"
  */
 static int ast_say_number_full_en_GB(struct ast_channel *chan, int num, const char *ints, const char *language, int audiofd, int ctrlfd)
 {
@@ -1023,7 +1021,7 @@ static int ast_say_number_full_en_GB(struct ast_channel *chan, int num, const ch
 			ast_copy_string(fn, "digits/hundred", sizeof(fn));
 			playh = 0;
 		} else if (playa) {
-			ast_copy_string(fn, "digits/and", sizeof(fn));
+			ast_copy_string(fn, "vm-and", sizeof(fn));
 			playa = 0;
 		} else if (num < 20) {
 			snprintf(fn, sizeof(fn), "digits/%d", num);
@@ -4032,7 +4030,7 @@ int ast_say_date_is(struct ast_channel *chan, time_t t, const char *ints, const 
 				if (!res) {
 					res = wait_file(chan, ints, "digits/hundred", lang);
 					if (!res && year % 100 != 0) {
-						res = ast_say_number(chan, (year % 100), ints, lang, (char *) NULL);	
+						res = ast_say_number(chan, (year % 100), ints, lang, (char *) NULL);
 					}
 				}
 			}
@@ -4443,9 +4441,9 @@ int ast_say_date_with_format_da(struct ast_channel *chan, time_t t, const char *
 				}
 				if (!res && next_item(&format[offset + 1]) == 'S') { /* minutes only if seconds follow */
 					if (tm.tm_min == 1) {
-						res = wait_file(chan, ints, "digits/minute", lang);
+						res = wait_file(chan, ints, "minute", lang);
 					} else {
-						res = wait_file(chan, ints, "digits/minutes", lang);
+						res = wait_file(chan, ints, "minutes", lang);
 					}
 				}
 				break;
@@ -4519,7 +4517,7 @@ int ast_say_date_with_format_da(struct ast_channel *chan, time_t t, const char *
 				if (!res) {
 					res = ast_say_number(chan, tm.tm_sec, ints, lang, "f");
 					if (!res) {
-						res = wait_file(chan, ints, "digits/seconds", lang);
+						res = wait_file(chan, ints, "seconds", lang);
 					}
 				}
 				break;
@@ -4639,16 +4637,16 @@ int ast_say_date_with_format_de(struct ast_channel *chan, time_t t, const char *
 			case 'M':
 				/* Minute */
 				if (next_item(&format[offset + 1]) == 'S') { /* zero 'digits/0' only if seconds follow */
-					res = ast_say_number(chan, tm.tm_min, ints, lang, "f"); /* female only if we say digits/minutes */
+					res = ast_say_number(chan, tm.tm_min, ints, lang, "f"); /* female only if we say minutes */
 				} else if (tm.tm_min > 0) {
 					res = ast_say_number(chan, tm.tm_min, ints, lang, (char *) NULL);
 				}
 
 				if (!res && next_item(&format[offset + 1]) == 'S') { /* minutes only if seconds follow */
 					if (tm.tm_min == 1) {
-						res = wait_file(chan, ints, "digits/minute", lang);
+						res = wait_file(chan, ints, "minute", lang);
 					} else {
-						res = wait_file(chan, ints, "digits/minutes", lang);
+						res = wait_file(chan, ints, "minutes", lang);
 					}
 				}
 				break;
@@ -4722,7 +4720,7 @@ int ast_say_date_with_format_de(struct ast_channel *chan, time_t t, const char *
 				if (!res) {
 					res = ast_say_number(chan, tm.tm_sec, ints, lang, "f");
 					if (!res) {
-						res = wait_file(chan, ints, tm.tm_sec == 1 ? "digits/second" : "digits/seconds", lang);
+						res = wait_file(chan, ints, tm.tm_sec == 1 ? "second" : "seconds", lang);
 					}
 				}
 				break;
@@ -4797,7 +4795,7 @@ int ast_say_date_with_format_is(struct ast_channel *chan, time_t t, const char *
 				{
 					int year = tm.tm_year + 1900;
 					if (year > 1999) {	/* year 2000 and later */
-						res = ast_say_number(chan, year, ints, lang, (char *) NULL);	
+						res = ast_say_number(chan, year, ints, lang, (char *) NULL);
 					} else {
 						if (year < 1100) {
 							/* I'm not going to handle 1100 and prior */
@@ -4810,7 +4808,7 @@ int ast_say_date_with_format_is(struct ast_channel *chan, time_t t, const char *
 							if (!res) {
 								res = wait_file(chan, ints, "digits/hundred", lang);
 								if (!res && year % 100 != 0) {
-									res = ast_say_number(chan, (year % 100), ints, lang, (char *) NULL);	
+									res = ast_say_number(chan, (year % 100), ints, lang, (char *) NULL);
 								}
 							}
 						}
@@ -4855,9 +4853,9 @@ int ast_say_date_with_format_is(struct ast_channel *chan, time_t t, const char *
 				if (!res && next_item(&format[offset + 1]) == 'S') { /* minutes only if seconds follow */
 					/* Say minute/minutes depending on whether minutes end in 1 */
 					if ((tm.tm_min % 10 == 1) && (tm.tm_min != 11)) {
-						res = wait_file(chan, ints, "digits/minute", lang);
+						res = wait_file(chan, ints, "minute", lang);
 					} else {
-						res = wait_file(chan, ints, "digits/minutes", lang);
+						res = wait_file(chan, ints, "minutes", lang);
 					}
 				}
 				break;
@@ -4932,9 +4930,9 @@ int ast_say_date_with_format_is(struct ast_channel *chan, time_t t, const char *
 					res = ast_say_number(chan, tm.tm_sec, ints, lang, "f");
 					/* Say minute/minutes depending on whether seconds end in 1 */
 					if (!res && (tm.tm_sec % 10 == 1) && (tm.tm_sec != 11)) {
-						res = wait_file(chan, ints, "digits/second", lang);
+						res = wait_file(chan, ints, "second", lang);
 					} else {
-						res = wait_file(chan, ints, "digits/seconds", lang);
+						res = wait_file(chan, ints, "seconds", lang);
 					}
 				}
 				break;
@@ -5654,7 +5652,7 @@ int ast_say_date_with_format_fr(struct ast_channel *chan, time_t t, const char *
 				/* Seconds */
 				res = ast_say_number(chan, tm.tm_sec, ints, lang, (char * ) NULL);
 				if (!res) {
-					res = wait_file(chan, ints, "digits/second", lang);
+					res = wait_file(chan, ints, "second", lang);
 				}
 				break;
 			case 'T':
@@ -6305,9 +6303,9 @@ int ast_say_date_with_format_pl(struct ast_channel *chan, time_t thetime, const 
 							one = tm.tm_sec % 10;
 
 							if (one > 1 && one < 5 && ten != 1)
-								res = wait_file(chan, ints, "digits/seconds", lang);
+								res = wait_file(chan, ints, "seconds", lang);
 							else
-								res = wait_file(chan, ints, "digits/second", lang);
+								res = wait_file(chan, ints, "second", lang);
 						}
 					}
 				}
@@ -6471,9 +6469,9 @@ int ast_say_date_with_format_pt(struct ast_channel *chan, time_t t, const char *
 					res = ast_say_number(chan, tm.tm_min, ints, lang, NULL);
 					if (!res) {
 						if (tm.tm_min > 1) {
-							res = wait_file(chan, ints, "digits/minutes", lang);
+							res = wait_file(chan, ints, "minutes", lang);
 						} else {
-							res = wait_file(chan, ints, "digits/minute", lang);
+							res = wait_file(chan, ints, "minute", lang);
 						}
 					}
 				} else {
@@ -6569,9 +6567,9 @@ int ast_say_date_with_format_pt(struct ast_channel *chan, time_t t, const char *
 					res = ast_say_number(chan, tm.tm_sec, ints, lang, NULL);
 					if (!res) {
 						if (tm.tm_sec > 1) {
-							res = wait_file(chan, ints, "digits/seconds", lang);
+							res = wait_file(chan, ints, "seconds", lang);
 						} else {
-							res = wait_file(chan, ints, "digits/second", lang);
+							res = wait_file(chan, ints, "second", lang);
 						}
 					}
 				} else {
@@ -6785,7 +6783,7 @@ int ast_say_date_with_format_zh(struct ast_channel *chan, time_t t, const char *
 					}
 				}
 				if (!res) {
-					res = wait_file(chan, ints, "digits/minute", lang);
+					res = wait_file(chan, ints, "minute", lang);
 				}
 				break;
 			case 'P':
@@ -6869,7 +6867,7 @@ int ast_say_date_with_format_zh(struct ast_channel *chan, time_t t, const char *
 					}
 				}
 				if (!res) {
-					res = wait_file(chan, ints, "digits/second", lang);
+					res = wait_file(chan, ints, "second", lang);
 				}
 				break;
 			case 'T':
@@ -7024,7 +7022,7 @@ int ast_say_time_hu(struct ast_channel *chan, time_t t, const char *ints, const 
 	    if (tm.tm_min > 0) {
 			res = ast_say_number(chan, tm.tm_min, ints, lang, "f");
 			if (!res)
-				res = ast_streamfile(chan, "digits/minute", lang);
+				res = ast_streamfile(chan, "minute", lang);
 		}
 	return res;
 }
@@ -7119,9 +7117,9 @@ int ast_say_time_pt_BR(struct ast_channel *chan, time_t t, const char *ints, con
 			res = ast_say_number(chan, tm.tm_min, ints, lang, (char *) NULL);
 		if (!res) {
 			if (tm.tm_min > 1)
-				res = wait_file(chan, ints, "digits/minutes", lang);
+				res = wait_file(chan, ints, "minutes", lang);
 			else
-				res = wait_file(chan, ints, "digits/minute", lang);
+				res = wait_file(chan, ints, "minute", lang);
 		}
 	}
 	return res;
@@ -7181,7 +7179,7 @@ int ast_say_time_zh(struct ast_channel *chan, time_t t, const char *ints, const 
 	if (!res)
 		res = ast_say_number(chan, tm.tm_min, ints, lang, (char *) NULL);
 	if (!res)
-		res = ast_streamfile(chan, "digits/minute", lang);
+		res = ast_streamfile(chan, "minute", lang);
 	if (!res)
 		res = ast_waitstream(chan, ints);
 	return res;
@@ -7604,7 +7602,7 @@ int ast_say_datetime_zh(struct ast_channel *chan, time_t t, const char *ints, co
 	if (!res)
 		res = ast_say_number(chan, tm.tm_min, ints, lang, (char *) NULL);
 	if (!res)
-		res = ast_streamfile(chan, "digits/minute", lang);
+		res = ast_streamfile(chan, "minute", lang);
 	if (!res)
 		res = ast_waitstream(chan, ints);
 	return res;
@@ -8482,7 +8480,7 @@ static int ast_say_date_with_format_gr(struct ast_channel *chan, time_t t, const
 			if (!res)
 				res = ast_say_number_full_gr(chan, tm.tm_sec, ints, lang, -1, -1);
 			if (!res)
-				ast_copy_string(nextmsg, "digits/seconds", sizeof(nextmsg));
+				ast_copy_string(nextmsg, "seconds", sizeof(nextmsg));
 			res = wait_file(chan, ints, nextmsg, lang);
 			break;
 		case 'T':

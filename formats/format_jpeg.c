@@ -19,7 +19,7 @@
 /*! \file
  *
  * \brief JPEG File format support.
- * 
+ *
  * \arg File name extension: jpeg, jpg
  * \ingroup formats
  */
@@ -27,10 +27,8 @@
 /*** MODULEINFO
 	<support_level>extended</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -98,7 +96,7 @@ static int load_module(void)
 {
 	jpeg_format.format = ast_format_jpeg;
 	if (ast_image_register(&jpeg_format))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

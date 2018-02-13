@@ -26,6 +26,7 @@
 /* #define DEBUG_OPAQUE */
 
 #include <ctype.h>
+#include <limits.h>
 
 #include "asterisk/utils.h"
 #include "asterisk/threadstorage.h"
@@ -167,7 +168,7 @@ char *ast_trim_blanks(char *str),
 
 	if (work) {
 		work += strlen(work) - 1;
-		/* It's tempting to only want to erase after we exit this loop, 
+		/* It's tempting to only want to erase after we exit this loop,
 		   but since ast_trim_blanks *could* receive a constant string
 		   (which we presumably wouldn't have to touch), we shouldn't
 		   actually set anything unless we must, and it's easier just
@@ -197,7 +198,7 @@ char * attribute_pure ast_skip_nonblanks(const char *str),
 	return (char *) str;
 }
 )
-  
+
 /*!
   \brief Strip leading/trailing whitespace from a string.
   \param s The string to be stripped (will be modified).
@@ -214,7 +215,7 @@ char *ast_strip(char *s),
 		ast_trim_blanks(s);
 	}
 	return s;
-} 
+}
 )
 
 /*!
@@ -255,7 +256,7 @@ enum ast_strsep_flags {
 
 /*!
   \brief Act like strsep but ignore separators inside quotes.
-  \param s Pointer to address of the the string to be processed.
+  \param s Pointer to address of the string to be processed.
   Will be modified and can't be constant.
   \param sep A single character delimiter.
   \param flags Controls post-processing of the result.
@@ -304,7 +305,7 @@ enum ast_strsep_flags {
 char *ast_strsep(char **s, const char sep, uint32_t flags);
 
 /*!
-  \brief Strip backslash for "escaped" semicolons, 
+  \brief Strip backslash for "escaped" semicolons,
 	the string to be stripped (will be modified).
   \return The stripped string.
  */
@@ -401,7 +402,7 @@ void ast_copy_string(char *dst, const char *src, size_t size),
 
 /*!
   \brief Build a string in a buffer, designed to be called repeatedly
-  
+
   \note This method is not recommended. New code should use ast_str_*() instead.
 
   This is a wrapper for snprintf, that properly handles the buffer pointer
@@ -417,7 +418,7 @@ int ast_build_string(char **buffer, size_t *space, const char *fmt, ...) __attri
 
 /*!
   \brief Build a string in a buffer, designed to be called repeatedly
-  
+
   This is a wrapper for snprintf, that properly handles the buffer pointer
   and buffer space available.
 
@@ -441,11 +442,11 @@ int ast_build_string_va(char **buffer, size_t *space, const char *fmt, va_list a
  */
 int attribute_pure ast_true(const char *val);
 
-/*! 
+/*!
  * \brief Make sure something is false.
  * Determine if a string containing a boolean value is "false".
- * This function checks to see whether a string passed to it is an indication of an "false" value.  
- * It checks to see if the string is "no", "false", "n", "f", "off" or "0".  
+ * This function checks to see whether a string passed to it is an indication of an "false" value.
+ * It checks to see if the string is "no", "false", "n", "f", "off" or "0".
  *
  * \retval 0 if val is a NULL pointer.
  * \retval -1 if "true".
@@ -753,7 +754,7 @@ char *ast_str_truncate(struct ast_str *buf, ssize_t len),
 	return buf->__AST_STR_STR;
 }
 )
-	
+
 /*
  * AST_INLINE_API() is a macro that takes a block of code as an argument.
  * Using preprocessor #directives in the argument is not supported by all
@@ -777,7 +778,7 @@ int _ast_str_make_space(struct ast_str **buf, size_t new_len, const char *file, 
 {
 	struct ast_str *old_buf = *buf;
 
-	if (new_len <= (*buf)->__AST_STR_LEN) 
+	if (new_len <= (*buf)->__AST_STR_LEN)
 		return 0;	/* success */
 	if ((*buf)->__AST_STR_TS == DS_ALLOCA || (*buf)->__AST_STR_TS == DS_STATIC)
 		return -1;	/* cannot extend */
@@ -802,7 +803,7 @@ int ast_str_make_space(struct ast_str **buf, size_t new_len),
 {
 	struct ast_str *old_buf = *buf;
 
-	if (new_len <= (*buf)->__AST_STR_LEN) 
+	if (new_len <= (*buf)->__AST_STR_LEN)
 		return 0;	/* success */
 	if ((*buf)->__AST_STR_TS == DS_ALLOCA || (*buf)->__AST_STR_TS == DS_STATIC)
 		return -1;	/* cannot extend */
@@ -854,8 +855,8 @@ int ast_str_copy_string(struct ast_str **dst, struct ast_str *src),
  * \brief Retrieve a thread locally stored dynamic string
  *
  * \param ts This is a pointer to the thread storage structure declared by using
- *      the AST_THREADSTORAGE macro.  If declared with 
- *      AST_THREADSTORAGE(my_buf, my_buf_init), then this argument would be 
+ *      the AST_THREADSTORAGE macro.  If declared with
+ *      AST_THREADSTORAGE(my_buf, my_buf_init), then this argument would be
  *      (&my_buf).
  * \param init_len This is the initial length of the thread's dynamic string. The
  *      current length may be bigger if previous operations in this thread have
@@ -1007,7 +1008,7 @@ char *__ast_str_helper2(struct ast_str **buf, ssize_t max_len,
  *      va_start(fmt, ap);
  *      ast_str_set_va(&buf, 0, fmt, ap);
  *      va_end(ap);
- * 
+ *
  *      printf("This is the string we just built: %s\n", buf->str);
  *      ...
  * }
@@ -1174,6 +1175,19 @@ char *ast_tech_to_upper(char *dev_str),
 )
 
 /*!
+ * \brief Restrict hash value range
+ *
+ * \details
+ * Hash values used all over asterisk are expected to be non-negative
+ * (signed) int values.  This function restricts an unsigned int hash
+ * value to the positive half of the (signed) int values.
+ */
+static force_inline int attribute_pure ast_str_hash_restrict(unsigned int hash)
+{
+	return (int) (hash & (unsigned int) INT_MAX);
+}
+
+/*!
  * \brief Compute a hash value on a string
  *
  * This famous hash algorithm was written by Dan Bernstein and is
@@ -1183,20 +1197,21 @@ char *ast_tech_to_upper(char *dev_str),
  */
 static force_inline int attribute_pure ast_str_hash(const char *str)
 {
-	int hash = 5381;
+	unsigned int hash = 5381;
 
-	while (*str)
-		hash = hash * 33 ^ *str++;
+	while (*str) {
+		hash = hash * 33 ^ (unsigned char) *str++;
+	}
 
-	return abs(hash);
+	return ast_str_hash_restrict(hash);
 }
 
 /*!
  * \brief Compute a hash value on a string
  *
  * \param[in] str The string to add to the hash
- * \param[in] hash The hash value to add to
- * 
+ * \param[in] seed The hash value to start with
+ *
  * \details
  * This version of the function is for when you need to compute a
  * string hash of more than one string.
@@ -1206,12 +1221,15 @@ static force_inline int attribute_pure ast_str_hash(const char *str)
  *
  * \sa http://www.cse.yorku.ca/~oz/hash.html
  */
-static force_inline int ast_str_hash_add(const char *str, int hash)
+static force_inline int ast_str_hash_add(const char *str, int seed)
 {
-	while (*str)
-		hash = hash * 33 ^ *str++;
+	unsigned int hash = (unsigned int) seed;
 
-	return abs(hash);
+	while (*str) {
+		hash = hash * 33 ^ (unsigned char) *str++;
+	}
+
+	return ast_str_hash_restrict(hash);
 }
 
 /*!
@@ -1223,13 +1241,13 @@ static force_inline int ast_str_hash_add(const char *str, int hash)
  */
 static force_inline int attribute_pure ast_str_case_hash(const char *str)
 {
-	int hash = 5381;
+	unsigned int hash = 5381;
 
 	while (*str) {
-		hash = hash * 33 ^ tolower(*str++);
+		hash = hash * 33 ^ (unsigned char) tolower(*str++);
 	}
 
-	return abs(hash);
+	return ast_str_hash_restrict(hash);
 }
 
 /*!
@@ -1364,5 +1382,25 @@ char *ast_generate_random_string(char *buf, size_t size);
  *     Otherwise, same as "=".
  */
 int ast_strings_match(const char *left, const char *op, const char *right);
+
+/*!
+ * \brief Read lines from a string buffer
+ * \since 13.18.0
+ *
+ * \param buffer [IN/OUT] A pointer to a char * string with either Unix or Windows line endings
+ *
+ * \return The "next" line
+ *
+ * \warning The original string and *buffer will be modified.
+ *
+ * \details
+ * Both '\n' and '\r\n' are treated as single delimiters but consecutive occurrances of
+ * the delimiters are NOT considered to be a single delimiter.  This preserves blank
+ * lines in the input.
+ *
+ * MacOS line endings ('\r') are not supported at this time.
+ *
+ */
+char *ast_read_line_from_buffer(char **buffer);
 
 #endif /* _ASTERISK_STRINGS_H */

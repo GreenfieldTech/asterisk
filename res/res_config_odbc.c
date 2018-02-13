@@ -35,8 +35,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
@@ -145,7 +143,7 @@ static SQLHSTMT custom_prepare(struct odbc_obj *obj, void *data)
 			ENCODE_CHUNK(encodebuf, newval);
 			ast_string_field_set(cps, encoding[x], encodebuf);
 			newval = cps->encoding[x];
-		} 
+		}
 		SQLBindParameter(stmt, x++, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_CHAR, strlen(newval), 0, (void *)newval, 0, NULL);
 	}
 
@@ -245,7 +243,7 @@ static struct ast_variable *realtime_odbc(const char *database, const char *tabl
 	for (x = 0; x < colcount; x++) {
 		colsize = 0;
 		collen = sizeof(coltitle);
-		res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen, 
+		res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen,
 					&datatype, &colsize, &decimaldigits, &nullable);
 		if ((res != SQL_SUCCESS) && (res != SQL_SUCCESS_WITH_INFO)) {
 			ast_log(LOG_WARNING, "SQL Describe Column error! [%s]\n", ast_str_buffer(sql));
@@ -315,7 +313,7 @@ static struct ast_variable *realtime_odbc(const char *database, const char *tabl
  * \param ap list containing one or more field/operator/value set.
  *
  * Select database and preform query on table, prepare the sql statement
- * Sub-in the values to the prepared statement and execute it. 
+ * Sub-in the values to the prepared statement and execute it.
  * Execute this prepared query against several ODBC connected databases.
  * Return results as an ast_config variable.
  *
@@ -409,15 +407,14 @@ static struct ast_config *realtime_multi_odbc(const char *database, const char *
 			ast_log(LOG_WARNING, "SQL Fetch error! [%s]\n", ast_str_buffer(sql));
 			continue;
 		}
-		cat = ast_category_new("","",99999);
+		cat = ast_category_new_anonymous();
 		if (!cat) {
-			ast_log(LOG_WARNING, "Out of memory!\n");
 			continue;
 		}
 		for (x=0;x<colcount;x++) {
 			colsize = 0;
 			collen = sizeof(coltitle);
-			res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen, 
+			res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen,
 						&datatype, &colsize, &decimaldigits, &nullable);
 			if ((res != SQL_SUCCESS) && (res != SQL_SUCCESS_WITH_INFO)) {
 				ast_log(LOG_WARNING, "SQL Describe Column error! [%s]\n", ast_str_buffer(sql));
@@ -1016,11 +1013,10 @@ static struct ast_config *config_odbc(const char *database, const char *table, c
 				return NULL;
 			}
 			continue;
-		} 
+		}
 		if (strcmp(last, q.category) || last_cat_metric != q.cat_metric) {
-			cur_cat = ast_category_new(q.category, "", 99999);
+			cur_cat = ast_category_new_dynamic(q.category);
 			if (!cur_cat) {
-				ast_log(LOG_WARNING, "Out of memory!\n");
 				break;
 			}
 			strcpy(last, q.category);

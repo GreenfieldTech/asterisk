@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/module.h"
 #include "asterisk/time.h"
@@ -114,7 +112,13 @@ struct ast_taskprocessor_listener {
 	void *user_data;
 };
 
-#define TPS_MAX_BUCKETS 7
+#ifdef LOW_MEMORY
+#define TPS_MAX_BUCKETS 61
+#else
+/*! \brief Number of buckets in the tps_singletons container. */
+#define TPS_MAX_BUCKETS 1567
+#endif
+
 /*! \brief tps_singletons is the astobj2 container for taskprocessor singletons */
 static struct ao2_container *tps_singletons;
 
@@ -884,12 +888,10 @@ static int taskprocessor_push(struct ast_taskprocessor *tps, struct tps_task *t)
 	previous_size = tps->tps_queue_size++;
 
 	if (tps->tps_queue_high <= tps->tps_queue_size) {
-		if (!tps->high_water_warned) {
-			tps->high_water_warned = 1;
-			ast_log(LOG_WARNING, "The '%s' task processor queue reached %ld scheduled tasks.\n",
-				tps->name, tps->tps_queue_size);
-		}
 		if (!tps->high_water_alert) {
+			ast_log(LOG_WARNING, "The '%s' task processor queue reached %ld scheduled tasks%s.\n",
+				tps->name, tps->tps_queue_size, tps->high_water_warned ? " again" : "");
+			tps->high_water_warned = 1;
 			tps->high_water_alert = 1;
 			tps_alert_add(tps, +1);
 		}

@@ -19,7 +19,6 @@
 /*** MODULEINFO
 	<depend>pjproject</depend>
 	<depend>res_pjsip</depend>
-	<depend>res_pjsip_session</depend>
 	<support_level>core</support_level>
  ***/
 
@@ -139,8 +138,6 @@ static struct ast_sip_session_supplement rfc3326_supplement = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
 	ast_sip_session_register_supplement(&rfc3326_supplement);
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -156,4 +153,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP RFC3326 Support
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session",
 );

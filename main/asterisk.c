@@ -149,8 +149,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 
 #undef sched_setscheduler
@@ -250,6 +248,7 @@ int daemon(int, int);  /* defined in libresolv of all places */
 #include "asterisk/format_cache.h"
 #include "asterisk/media_cache.h"
 #include "asterisk/astdb.h"
+#include "asterisk/options.h"
 
 #include "../defaults.h"
 
@@ -331,6 +330,8 @@ int ast_verb_sys_level;
 
 int option_verbose;				/*!< Verbosity level */
 int option_debug;				/*!< Debug level */
+int ast_pjproject_max_log_level = -1;/* Default to -1 to know if we have read the level from pjproject yet. */
+int ast_option_pjproject_log_level;
 double ast_option_maxload;			/*!< Max load avg on system */
 int ast_option_maxcalls;			/*!< Max number of active calls */
 int ast_option_maxfiles;			/*!< Max number of open file handles (files, sockets) */
@@ -338,6 +339,8 @@ unsigned int option_dtmfminduration;		/*!< Minimum duration of DTMF. */
 #if defined(HAVE_SYSINFO)
 long option_minmemfree;				/*!< Minimum amount of free system memory - stop accepting calls if free memory falls below this watermark */
 #endif
+int ast_option_rtpusedynamic;
+unsigned int ast_option_rtpptdynamic;
 
 /*! @} */
 
@@ -347,6 +350,7 @@ struct ast_eid ast_eid_default;
 char record_cache_dir[AST_CACHE_DIR_LEN] = DEFAULT_TMP_DIR;
 
 static int ast_socket = -1;		/*!< UNIX Socket for allowing remote control */
+static int ast_socket_is_sd = 0; /*!< Is socket activation responsible for ast_socket? */
 static int ast_consock = -1;		/*!< UNIX Socket for controlling another asterisk */
 pid_t ast_mainpid;
 struct console {
@@ -388,6 +392,9 @@ static void ast_el_read_default_histfile(void);
 static void ast_el_write_default_histfile(void);
 
 static void asterisk_daemon(int isroot, const char *runuser, const char *rungroup);
+
+#define DEFAULT_MONITOR_DIR DEFAULT_SPOOL_DIR "/monitor"
+#define DEFAULT_RECORDING_DIR DEFAULT_SPOOL_DIR "/recording"
 
 struct _cfg_paths {
 	char config_dir[PATH_MAX];
@@ -488,65 +495,6 @@ static struct {
 } sig_flags;
 
 #if !defined(LOW_MEMORY)
-struct registered_file {
-	AST_RWLIST_ENTRY(registered_file) list;
-	const char *file;
-};
-
-static AST_RWLIST_HEAD_STATIC(registered_files, registered_file);
-
-void __ast_register_file(const char *file)
-{
-	struct registered_file *reg;
-
-	reg = ast_calloc(1, sizeof(*reg));
-	if (!reg) {
-		return;
-	}
-
-	reg->file = file;
-	AST_RWLIST_WRLOCK(&registered_files);
-	AST_RWLIST_INSERT_HEAD(&registered_files, reg, list);
-	AST_RWLIST_UNLOCK(&registered_files);
-}
-
-void __ast_unregister_file(const char *file)
-{
-	struct registered_file *find;
-
-	AST_RWLIST_WRLOCK(&registered_files);
-	AST_RWLIST_TRAVERSE_SAFE_BEGIN(&registered_files, find, list) {
-		if (!strcasecmp(find->file, file)) {
-			AST_RWLIST_REMOVE_CURRENT(list);
-			break;
-		}
-	}
-	AST_RWLIST_TRAVERSE_SAFE_END;
-	AST_RWLIST_UNLOCK(&registered_files);
-
-	if (find) {
-		ast_free(find);
-	}
-}
-
-char *ast_complete_source_filename(const char *partial, int n)
-{
-	struct registered_file *find;
-	size_t len = strlen(partial);
-	int count = 0;
-	char *res = NULL;
-
-	AST_RWLIST_RDLOCK(&registered_files);
-	AST_RWLIST_TRAVERSE(&registered_files, find, list) {
-		if (!strncasecmp(find->file, partial, len) && ++count > n) {
-			res = ast_strdup(find->file);
-			break;
-		}
-	}
-	AST_RWLIST_UNLOCK(&registered_files);
-	return res;
-}
-
 struct thread_list_t {
 	AST_RWLIST_ENTRY(thread_list_t) list;
 	char *name;
@@ -659,6 +607,23 @@ static char *handle_show_settings(struct ast_cli_entry *e, int cmd, struct ast_c
 	ast_cli(a->fd, "  Transmit silence during rec: %s\n", ast_test_flag(&ast_options, AST_OPT_FLAG_TRANSMIT_SILENCE) ? "Enabled" : "Disabled");
 	ast_cli(a->fd, "  Generic PLC:                 %s\n", ast_test_flag(&ast_options, AST_OPT_FLAG_GENERIC_PLC) ? "Enabled" : "Disabled");
 	ast_cli(a->fd, "  Min DTMF duration::          %u\n", option_dtmfminduration);
+#if !defined(LOW_MEMORY)
+	ast_cli(a->fd, "  Cache media frames:          %s\n", ast_opt_cache_media_frames ? "Enabled" : "Disabled");
+#endif
+	ast_cli(a->fd, "  RTP use dynamic payloads:    %u\n", ast_option_rtpusedynamic);
+
+	if (ast_option_rtpptdynamic == AST_RTP_PT_LAST_REASSIGN) {
+		ast_cli(a->fd, "  RTP dynamic payload types:   %u,%u-%u\n",
+		        ast_option_rtpptdynamic,
+		        AST_RTP_PT_FIRST_DYNAMIC, AST_RTP_MAX_PT - 1);
+	} else if (ast_option_rtpptdynamic < AST_RTP_PT_LAST_REASSIGN) {
+		ast_cli(a->fd, "  RTP dynamic payload types:   %u-%u,%u-%u\n",
+		        ast_option_rtpptdynamic, AST_RTP_PT_LAST_REASSIGN,
+		        AST_RTP_PT_FIRST_DYNAMIC, AST_RTP_MAX_PT - 1);
+	} else {
+		ast_cli(a->fd, "  RTP dynamic payload types:   %u-%u\n",
+		        AST_RTP_PT_FIRST_DYNAMIC, AST_RTP_MAX_PT - 1);
+	}
 
 	ast_cli(a->fd, "\n* Subsystems\n");
 	ast_cli(a->fd, "  -------------\n");
@@ -749,12 +714,6 @@ static int swapmode(int *used, int *total)
 	ast_free(swdev);
 	return 1;
 }
-#elif defined(HAVE_SYSCTL) && !defined(HAVE_SYSINFO)
-static int swapmode(int *used, int *total)
-{
-	*used = *total = 0;
-	return 1;
-}
 #endif
 
 #if defined(HAVE_SYSINFO) || defined(HAVE_SYSCTL)
@@ -762,12 +721,38 @@ static int swapmode(int *used, int *total)
 static char *handle_show_sysinfo(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	uint64_t physmem, freeram;
+#if defined(HAVE_SYSINFO) || defined(HAVE_SWAPCTL)
+	int totalswap = 0;
 	uint64_t freeswap = 0;
+#endif
 	int nprocs = 0;
 	long uptime = 0;
-	int totalswap = 0;
 #if defined(HAVE_SYSINFO)
 	struct sysinfo sys_info;
+#elif defined(HAVE_SYSCTL)
+	static int pageshift;
+	struct vmtotal vmtotal;
+	struct timeval	boottime;
+	time_t	now;
+	int mib[2], pagesize;
+#if defined(HAVE_SWAPCTL)
+	int usedswap = 0;
+#endif
+	size_t len;
+#endif
+
+	switch (cmd) {
+	case CLI_INIT:
+		e->command = "core show sysinfo";
+		e->usage =
+			"Usage: core show sysinfo\n"
+			"       List current system information.\n";
+		return NULL;
+	case CLI_GENERATE:
+		return NULL;
+	}
+
+#if defined(HAVE_SYSINFO)
 	sysinfo(&sys_info);
 	uptime = sys_info.uptime / 3600;
 	physmem = sys_info.totalram * sys_info.mem_unit;
@@ -776,12 +761,6 @@ static char *handle_show_sysinfo(struct ast_cli_entry *e, int cmd, struct ast_cl
 	freeswap = (sys_info.freeswap * sys_info.mem_unit) / 1024;
 	nprocs = sys_info.procs;
 #elif defined(HAVE_SYSCTL)
-	static int pageshift;
-	struct vmtotal vmtotal;
-	struct timeval	boottime;
-	time_t	now;
-	int mib[2], pagesize, usedswap = 0;
-	size_t len;
 	/* calculate the uptime by looking at boottime */
 	time(&now);
 	mib[0] = CTL_KERN;
@@ -818,8 +797,10 @@ static char *handle_show_sysinfo(struct ast_cli_entry *e, int cmd, struct ast_cl
 	sysctl(mib, 2, &vmtotal, &len, NULL, 0);
 	freeram = (vmtotal.t_free << pageshift);
 	/* generate swap usage and totals */
+#if defined(HAVE_SWAPCTL)
 	swapmode(&usedswap, &totalswap);
 	freeswap = (totalswap - usedswap);
+#endif
 	/* grab number of processes */
 #if defined(__OpenBSD__)
 	mib[0] = CTL_KERN;
@@ -829,17 +810,6 @@ static char *handle_show_sysinfo(struct ast_cli_entry *e, int cmd, struct ast_cl
 #endif
 #endif
 
-	switch (cmd) {
-	case CLI_INIT:
-		e->command = "core show sysinfo";
-		e->usage =
-			"Usage: core show sysinfo\n"
-			"       List current system information.\n";
-		return NULL;
-	case CLI_GENERATE:
-		return NULL;
-	}
-
 	ast_cli(a->fd, "\nSystem Statistics\n");
 	ast_cli(a->fd, "-----------------\n");
 	ast_cli(a->fd, "  System Uptime:             %ld hours\n", uptime);
@@ -848,7 +818,7 @@ static char *handle_show_sysinfo(struct ast_cli_entry *e, int cmd, struct ast_cl
 #if defined(HAVE_SYSINFO)
 	ast_cli(a->fd, "  Buffer RAM:                %" PRIu64 " KiB\n", ((uint64_t) sys_info.bufferram * sys_info.mem_unit) / 1024);
 #endif
-#if defined(HAVE_SWAPCTL) || defined(HAVE_SYSINFO)
+#if defined(HAVE_SYSINFO) || defined(HAVE_SWAPCTL)
 	ast_cli(a->fd, "  Total Swap Space:          %d KiB\n", totalswap);
 	ast_cli(a->fd, "  Free Swap Space:           %" PRIu64 " KiB\n\n", freeswap);
 #endif
@@ -872,12 +842,14 @@ struct profile_data {
 };
 
 static struct profile_data *prof_data;
+#endif /* ! LOW_MEMORY */
 
 /*! \brief allocates a counter with a given name and scale.
  * \return Returns the identifier of the counter.
  */
 int ast_add_profile(const char *name, uint64_t scale)
 {
+#if !defined(LOW_MEMORY)
 	int l = sizeof(struct profile_data);
 	int n = 10;	/* default entries */
 
@@ -904,10 +876,14 @@ int ast_add_profile(const char *name, uint64_t scale)
 	prof_data->e[n].mark = 0;
 	prof_data->e[n].scale = scale;
 	return n;
+#else /* if defined(LOW_MEMORY) */
+	return 0;
+#endif
 }
 
 int64_t ast_profile(int i, int64_t delta)
 {
+#if !defined(LOW_MEMORY)
 	if (!prof_data || i < 0 || i > prof_data->entries)	/* invalid index */
 		return 0;
 	if (prof_data->e[i].scale > 1)
@@ -915,8 +891,12 @@ int64_t ast_profile(int i, int64_t delta)
 	prof_data->e[i].value += delta;
 	prof_data->e[i].events++;
 	return prof_data->e[i].value;
+#else /* if defined(LOW_MEMORY) */
+	return 0;
+#endif
 }
 
+#if !defined(LOW_MEMORY)
 /* The RDTSC instruction was introduced on the Pentium processor and is not
  * implemented on certain clones, like the Cyrix 586. Hence, the previous
  * expectation of __i386__ was in error. */
@@ -940,9 +920,11 @@ rdtsc(void)
 	return 0;
 }
 #endif
+#endif /* ! LOW_MEMORY */
 
 int64_t ast_mark(int i, int startstop)
 {
+#if !defined(LOW_MEMORY)
 	if (!prof_data || i < 0 || i > prof_data->entries) /* invalid index */
 		return 0;
 	if (startstop == 1)
@@ -955,8 +937,12 @@ int64_t ast_mark(int i, int startstop)
 		prof_data->e[i].events++;
 	}
 	return prof_data->e[i].mark;
+#else /* if defined(LOW_MEMORY) */
+	return 0;
+#endif
 }
 
+#if !defined(LOW_MEMORY)
 #define DEFINE_PROFILE_MIN_MAX_VALUES min = 0; \
 	max = prof_data->entries;\
 	if  (a->argc > 3) { /* specific entries */ \
@@ -1192,11 +1178,10 @@ void ast_unreplace_sigchld(void)
 	ast_mutex_unlock(&safe_system_lock);
 }
 
-int ast_safe_system(const char *s)
+/*! \brief fork and perform other preparations for spawning applications */
+static pid_t safe_exec_prep(int dualfork)
 {
 	pid_t pid;
-	int res;
-	int status;
 
 #if defined(HAVE_WORKING_FORK) || defined(HAVE_WORKING_VFORK)
 	ast_replace_sigchld();
@@ -1218,33 +1203,99 @@ int ast_safe_system(const char *s)
 		cap_free(cap);
 #endif
 #ifdef HAVE_WORKING_FORK
-		if (ast_opt_high_priority)
+		if (ast_opt_high_priority) {
 			ast_set_priority(0);
+		}
 		/* Close file descriptors and launch system command */
 		ast_close_fds_above_n(STDERR_FILENO);
 #endif
-		execl("/bin/sh", "/bin/sh", "-c", s, (char *) NULL);
-		_exit(1);
-	} else if (pid > 0) {
+		if (dualfork) {
+#ifdef HAVE_WORKING_FORK
+			pid = fork();
+#else
+			pid = vfork();
+#endif
+			if (pid < 0) {
+				/* Second fork failed. */
+				/* No logger available. */
+				_exit(1);
+			}
+
+			if (pid > 0) {
+				/* This is the first fork, exit so the reaper finishes right away. */
+				_exit(0);
+			}
+
+			/* This is the second fork.  The first fork will exit immediately so
+			 * Asterisk doesn't have to wait for completion.
+			 * ast_safe_system("cmd &") would run in the background, but the '&'
+			 * cannot be added with ast_safe_execvp, so we have to double fork.
+			 */
+		}
+	}
+
+	if (pid < 0) {
+		ast_log(LOG_WARNING, "Fork failed: %s\n", strerror(errno));
+	}
+#else
+	ast_log(LOG_WARNING, "Fork failed: %s\n", strerror(ENOTSUP));
+	pid = -1;
+#endif
+
+	return pid;
+}
+
+/*! \brief wait for spawned application to complete and unreplace sigchld */
+static int safe_exec_wait(pid_t pid)
+{
+	int res = -1;
+
+#if defined(HAVE_WORKING_FORK) || defined(HAVE_WORKING_VFORK)
+	if (pid > 0) {
 		for (;;) {
+			int status;
+
 			res = waitpid(pid, &status, 0);
 			if (res > -1) {
 				res = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 				break;
-			} else if (errno != EINTR)
+			}
+			if (errno != EINTR) {
 				break;
+			}
 		}
-	} else {
-		ast_log(LOG_WARNING, "Fork failed: %s\n", strerror(errno));
-		res = -1;
 	}
 
 	ast_unreplace_sigchld();
-#else /* !defined(HAVE_WORKING_FORK) && !defined(HAVE_WORKING_VFORK) */
-	res = -1;
 #endif
 
 	return res;
+}
+
+int ast_safe_execvp(int dualfork, const char *file, char *const argv[])
+{
+	pid_t pid = safe_exec_prep(dualfork);
+
+	if (pid == 0) {
+		execvp(file, argv);
+		_exit(1);
+		/* noreturn from _exit */
+	}
+
+	return safe_exec_wait(pid);
+}
+
+int ast_safe_system(const char *s)
+{
+	pid_t pid = safe_exec_prep(0);
+
+	if (pid == 0) {
+		execl("/bin/sh", "/bin/sh", "-c", s, (char *) NULL);
+		_exit(1);
+		/* noreturn from _exit */
+	}
+
+	return safe_exec_wait(pid);
 }
 
 /*!
@@ -1523,18 +1574,21 @@ static void *listener(void *unused)
 	int s;
 	socklen_t len;
 	int x;
-	int flags;
+	int poll_result;
 	struct pollfd fds[1];
+
 	for (;;) {
-		if (ast_socket < 0)
+		if (ast_socket < 0) {
 			return NULL;
+		}
 		fds[0].fd = ast_socket;
 		fds[0].events = POLLIN;
-		s = ast_poll(fds, 1, -1);
+		poll_result = ast_poll(fds, 1, -1);
 		pthread_testcancel();
-		if (s < 0) {
-			if (errno != EINTR)
+		if (poll_result < 0) {
+			if (errno != EINTR) {
 				ast_log(LOG_WARNING, "poll returned error: %s\n", strerror(errno));
+			}
 			continue;
 		}
 		len = sizeof(sunaddr);
@@ -1548,6 +1602,7 @@ static void *listener(void *unused)
 			/* turn on socket credentials passing. */
 			if (setsockopt(s, SOL_SOCKET, SO_PASSCRED, &sckopt, sizeof(sckopt)) < 0) {
 				ast_log(LOG_WARNING, "Unable to turn on socket credentials passing\n");
+				close(s);
 			} else
 #endif
 			{
@@ -1561,8 +1616,7 @@ static void *listener(void *unused)
 						close(s);
 						break;
 					}
-					flags = fcntl(consoles[x].p[1], F_GETFL);
-					fcntl(consoles[x].p[1], F_SETFL, flags | O_NONBLOCK);
+					ast_fd_set_flags(consoles[x].p[1], O_NONBLOCK);
 					consoles[x].mute = 1; /* Default is muted, we will un-mute if necessary */
 					/* Default uid and gid to -2, so then in cli.c/cli_has_permissions() we will be able
 					   to know if the user didn't send the credentials. */
@@ -1602,8 +1656,16 @@ static int ast_makesocket(void)
 	uid_t uid = -1;
 	gid_t gid = -1;
 
-	for (x = 0; x < AST_MAX_CONNECTS; x++)
+	for (x = 0; x < AST_MAX_CONNECTS; x++) {
 		consoles[x].fd = -1;
+	}
+
+	if (ast_socket_is_sd) {
+		ast_socket = ast_sd_get_fd_un(SOCK_STREAM, ast_config_AST_SOCKET);
+
+		goto start_lthread;
+	}
+
 	unlink(ast_config_AST_SOCKET);
 	ast_socket = socket(PF_LOCAL, SOCK_STREAM, 0);
 	if (ast_socket < 0) {
@@ -1628,10 +1690,17 @@ static int ast_makesocket(void)
 		return -1;
 	}
 
+start_lthread:
 	if (ast_pthread_create_background(&lthread, NULL, listener, NULL)) {
 		ast_log(LOG_WARNING, "Unable to create listener thread.\n");
 		close(ast_socket);
 		return -1;
+	}
+
+	if (ast_socket_is_sd) {
+		/* owner/group/permissions are set by systemd, we might not even have access
+		 * to socket file so leave it alone */
+		return 0;
 	}
 
 	if (!ast_strlen_zero(ast_config_AST_CTL_OWNER)) {
@@ -1699,20 +1768,17 @@ static void _urg_handler(int num)
 
 static struct sigaction urg_handler = {
 	.sa_handler = _urg_handler,
-	.sa_flags = SA_RESTART,
 };
 
 static void _hup_handler(int num)
 {
-	int a = 0, save_errno = errno;
+	int save_errno = errno;
 	printf("Received HUP signal -- Reloading configs\n");
 	if (restartnow)
 		execvp(_argv[0], _argv);
 	sig_flags.need_reload = 1;
-	if (sig_alert_pipe[1] != -1) {
-		if (write(sig_alert_pipe[1], &a, sizeof(a)) < 0) {
-			fprintf(stderr, "hup_handler: write() failed: %s\n", strerror(errno));
-		}
+	if (ast_alertpipe_write(sig_alert_pipe)) {
+		fprintf(stderr, "hup_handler: write() failed: %s\n", strerror(errno));
 	}
 	errno = save_errno;
 }
@@ -2055,8 +2121,9 @@ static void really_quit(int num, shutdown_nice_t niceness, int restart)
 	struct ast_json *json_object = NULL;
 	int run_cleanups = niceness >= SHUTDOWN_NICE;
 
-	if (run_cleanups) {
-		ast_module_shutdown();
+	if (run_cleanups && modules_shutdown()) {
+		ast_verb(0, "Some modules could not be unloaded, switching to fast shutdown\n");
+		run_cleanups = 0;
 	}
 
 	if (!restart) {
@@ -2101,7 +2168,9 @@ static void really_quit(int num, shutdown_nice_t niceness, int restart)
 		pthread_cancel(lthread);
 		close(ast_socket);
 		ast_socket = -1;
-		unlink(ast_config_AST_SOCKET);
+		if (!ast_socket_is_sd) {
+			unlink(ast_config_AST_SOCKET);
+		}
 		pthread_kill(lthread, SIGURG);
 		pthread_join(lthread, NULL);
 	}
@@ -2109,10 +2178,7 @@ static void really_quit(int num, shutdown_nice_t niceness, int restart)
 		close(ast_consock);
 	if (!ast_opt_remote)
 		unlink(ast_config_AST_PID);
-	if (sig_alert_pipe[0])
-		close(sig_alert_pipe[0]);
-	if (sig_alert_pipe[1])
-		close(sig_alert_pipe[1]);
+	ast_alertpipe_close(sig_alert_pipe);
 	printf("%s", term_quit());
 	if (restart) {
 		int i;
@@ -2148,12 +2214,9 @@ static void really_quit(int num, shutdown_nice_t niceness, int restart)
 
 static void __quit_handler(int num)
 {
-	int a = 0;
 	sig_flags.need_quit = 1;
-	if (sig_alert_pipe[1] != -1) {
-		if (write(sig_alert_pipe[1], &a, sizeof(a)) < 0) {
-			fprintf(stderr, "quit_handler: write() failed: %s\n", strerror(errno));
-		}
+	if (ast_alertpipe_write(sig_alert_pipe)) {
+		fprintf(stderr, "quit_handler: write() failed: %s\n", strerror(errno));
 	}
 	/* There is no need to restore the signal handler here, since the app
 	 * is going to exit */
@@ -2334,52 +2397,6 @@ static int remoteconsolehandler(const char *s)
 	    (s[4] == '\0' || isspace(s[4]))) {
 		quit_handler(0, SHUTDOWN_FAST, 0);
 		ret = 1;
-	} else if (s[0]) {
-		char *shrunk = ast_strdupa(s);
-		char *cur;
-		char *prev;
-
-		/*
-		 * Remove duplicate spaces from shrunk for matching purposes.
-		 *
-		 * shrunk has at least one character in it to start with or we
-		 * couldn't get here.
-		 */
-		for (prev = shrunk, cur = shrunk + 1; *cur; ++cur) {
-			if (*prev == ' ' && *cur == ' ') {
-				/* Skip repeated space delimiter. */
-				continue;
-			}
-			*++prev = *cur;
-		}
-		*++prev = '\0';
-
-		if (strncasecmp(shrunk, "core set verbose ", 17) == 0) {
-			/*
-			 * We need to still set the rasterisk option_verbose in case we are
-			 * talking to an earlier version which doesn't prefilter verbose
-			 * levels.  This is really a compromise as we should always take
-			 * whatever the server sends.
-			 */
-
-			if (!strncasecmp(shrunk + 17, "off", 3)) {
-				ast_verb_console_set(0);
-			} else {
-				int verbose_new;
-				int atleast;
-
-				atleast = 8;
-				if (strncasecmp(shrunk + 17, "atleast ", atleast)) {
-					atleast = 0;
-				}
-
-				if (sscanf(shrunk + 17 + atleast, "%30d", &verbose_new) == 1) {
-					if (!atleast || ast_verb_console_get() < verbose_new) {
-						ast_verb_console_set(verbose_new);
-					}
-				}
-			}
-		}
 	}
 
 	return ret;
@@ -2405,16 +2422,6 @@ static char *handle_version(struct ast_cli_entry *e, int cmd, struct ast_cli_arg
 		ast_build_machine, ast_build_os, ast_build_date);
 	return CLI_SUCCESS;
 }
-
-#if 0
-static int handle_quit(int fd, int argc, char *argv[])
-{
-	if (argc != 1)
-		return RESULT_SHOWUSAGE;
-	quit_handler(0, SHUTDOWN_NORMAL, 0);
-	return RESULT_SUCCESS;
-}
-#endif
 
 static char *handle_stop_now(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
@@ -2713,6 +2720,9 @@ static void send_rasterisk_connect_commands(void)
 		fdsend(ast_consock, buf);
 	}
 
+	/* Leave verbose filtering to the server. */
+	option_verbose = INT_MAX;
+
 	if (!ast_opt_mute) {
 		fdsend(ast_consock, "logger mute silent");
 	} else {
@@ -2720,7 +2730,11 @@ static void send_rasterisk_connect_commands(void)
 	}
 }
 
+#ifdef HAVE_LIBEDIT_IS_UNICODE
+static int ast_el_read_char(EditLine *editline, wchar_t *cp)
+#else
 static int ast_el_read_char(EditLine *editline, char *cp)
+#endif
 {
 	int num_read = 0;
 	int lastpos = 0;
@@ -2750,10 +2764,16 @@ static int ast_el_read_char(EditLine *editline, char *cp)
 		}
 
 		if (!ast_opt_exec && fds[1].revents) {
-			num_read = read(STDIN_FILENO, cp, 1);
+			char c = '\0';
+			num_read = read(STDIN_FILENO, &c, 1);
 			if (num_read < 1) {
 				break;
 			} else {
+#ifdef 	HAVE_LIBEDIT_IS_UNICODE
+				*cp = btowc(c);
+#else
+				*cp = c;
+#endif
 				return (num_read);
 			}
 		}
@@ -2797,7 +2817,11 @@ static int ast_el_read_char(EditLine *editline, char *cp)
 			console_print(buf);
 
 			if ((res < EL_BUF_SIZE - 1) && ((buf[res-1] == '\n') || (res >= 2 && buf[res-2] == '\n'))) {
+#ifdef 	HAVE_LIBEDIT_IS_UNICODE
+				*cp = btowc(CC_REFRESH);
+#else
 				*cp = CC_REFRESH;
+#endif
 				return(1);
 			} else {
 				lastpos = 1;
@@ -2805,7 +2829,12 @@ static int ast_el_read_char(EditLine *editline, char *cp)
 		}
 	}
 
+#ifdef 	HAVE_LIBEDIT_IS_UNICODE
+	*cp = btowc('\0');
+#else
 	*cp = '\0';
+#endif
+
 	return (0);
 }
 
@@ -2937,121 +2966,64 @@ static char *cli_prompt(EditLine *editline)
 	return ast_str_buffer(prompt);
 }
 
-static void destroy_match_list(char **match_list, int matches)
-{
-	if (match_list) {
-		int idx;
-
-		for (idx = 0; idx < matches; ++idx) {
-			ast_free(match_list[idx]);
-		}
-		ast_free(match_list);
-	}
-}
-
-static char **ast_el_strtoarr(char *buf)
+static struct ast_vector_string *ast_el_strtoarr(char *buf)
 {
 	char *retstr;
-	char **match_list = NULL;
-	char **new_list;
-	size_t match_list_len = 1;
-	int matches = 0;
+	struct ast_vector_string *vec = ast_calloc(1, sizeof(*vec));
+
+	if (!vec) {
+		return NULL;
+	}
 
 	while ((retstr = strsep(&buf, " "))) {
 		if (!strcmp(retstr, AST_CLI_COMPLETE_EOF)) {
 			break;
 		}
-		if (matches + 1 >= match_list_len) {
-			match_list_len <<= 1;
-			new_list = ast_realloc(match_list, match_list_len * sizeof(char *));
-			if (!new_list) {
-				destroy_match_list(match_list, matches);
-				return NULL;
-			}
-			match_list = new_list;
-		}
 
 		retstr = ast_strdup(retstr);
-		if (!retstr) {
-			destroy_match_list(match_list, matches);
-			return NULL;
+		if (!retstr || AST_VECTOR_APPEND(vec, retstr)) {
+			ast_free(retstr);
+			goto vector_cleanup;
 		}
-		match_list[matches++] = retstr;
 	}
 
-	if (!match_list) {
-		return NULL;
+	if (!AST_VECTOR_SIZE(vec)) {
+		goto vector_cleanup;
 	}
 
-	if (matches >= match_list_len) {
-		new_list = ast_realloc(match_list, (match_list_len + 1) * sizeof(char *));
-		if (!new_list) {
-			destroy_match_list(match_list, matches);
-			return NULL;
-		}
-		match_list = new_list;
-	}
+	return vec;
 
-	match_list[matches] = NULL;
+vector_cleanup:
+	AST_VECTOR_CALLBACK_VOID(vec, ast_free);
+	AST_VECTOR_PTR_FREE(vec);
 
-	return match_list;
+	return NULL;
 }
 
-static int ast_el_sort_compare(const void *i1, const void *i2)
+static void ast_cli_display_match_list(struct ast_vector_string *matches, int max)
 {
-	char *s1, *s2;
-
-	s1 = ((char **)i1)[0];
-	s2 = ((char **)i2)[0];
-
-	return strcasecmp(s1, s2);
-}
-
-static int ast_cli_display_match_list(char **matches, int len, int max)
-{
-	int i, idx, limit, count;
-	int screenwidth = 0;
-	int numoutput = 0, numoutputline = 0;
-
-	screenwidth = ast_get_termcols(STDOUT_FILENO);
-
+	int idx = 1;
 	/* find out how many entries can be put on one line, with two spaces between strings */
-	limit = screenwidth / (max + 2);
-	if (limit == 0)
+	int limit = ast_get_termcols(STDOUT_FILENO) / (max + 2);
+
+	if (limit == 0) {
 		limit = 1;
-
-	/* how many lines of output */
-	count = len / limit;
-	if (count * limit < len)
-		count++;
-
-	idx = 1;
-
-	qsort(&matches[0], (size_t)(len), sizeof(char *), ast_el_sort_compare);
-
-	for (; count > 0; count--) {
-		numoutputline = 0;
-		for (i = 0; i < limit && matches[idx]; i++, idx++) {
-
-			/* Don't print dupes */
-			if ( (matches[idx+1] != NULL && strcmp(matches[idx], matches[idx+1]) == 0 ) ) {
-				i--;
-				ast_free(matches[idx]);
-				matches[idx] = NULL;
-				continue;
-			}
-
-			numoutput++;
-			numoutputline++;
-			fprintf(stdout, "%-*s  ", max, matches[idx]);
-			ast_free(matches[idx]);
-			matches[idx] = NULL;
-		}
-		if (numoutputline > 0)
-			fprintf(stdout, "\n");
 	}
 
-	return numoutput;
+	for (;;) {
+		int numoutputline;
+
+		for (numoutputline = 0; numoutputline < limit && idx < AST_VECTOR_SIZE(matches); idx++) {
+			numoutputline++;
+			fprintf(stdout, "%-*s  ", max, AST_VECTOR_GET(matches, idx));
+		}
+
+		if (!numoutputline) {
+			break;
+		}
+
+		fprintf(stdout, "\n");
+	}
 }
 
 
@@ -3059,10 +3031,9 @@ static char *cli_complete(EditLine *editline, int ch)
 {
 	int len = 0;
 	char *ptr;
-	int nummatches = 0;
-	char **matches;
+	struct ast_vector_string *matches;
 	int retval = CC_ERROR;
-	char buf[2048], savechr;
+	char savechr;
 	int res;
 
 	LineInfo *lf = (LineInfo *)el_line(editline);
@@ -3083,96 +3054,81 @@ static char *cli_complete(EditLine *editline, int ch)
 	len = lf->cursor - ptr;
 
 	if (ast_opt_remote) {
-		snprintf(buf, sizeof(buf), "_COMMAND NUMMATCHES \"%s\" \"%s\"", lf->buffer, ptr);
-		fdsend(ast_consock, buf);
-		if ((res = read(ast_consock, buf, sizeof(buf) - 1)) < 0) {
-			return (char*)(CC_ERROR);
+#define CMD_MATCHESARRAY "_COMMAND MATCHESARRAY \"%s\" \"%s\""
+		char *mbuf;
+		char *new_mbuf;
+		int mlen = 0;
+		int maxmbuf = ast_asprintf(&mbuf, CMD_MATCHESARRAY, lf->buffer, ptr);
+
+		if (maxmbuf == -1) {
+			*((char *) lf->cursor) = savechr;
+
+			return (char *)(CC_ERROR);
 		}
-		buf[res] = '\0';
-		nummatches = atoi(buf);
 
-		if (nummatches > 0) {
-			char *mbuf;
-			char *new_mbuf;
-			int mlen = 0, maxmbuf = 2048;
+		fdsend(ast_consock, mbuf);
+		res = 0;
+		mlen = 0;
+		mbuf[0] = '\0';
 
-			/* Start with a 2048 byte buffer */
-			if (!(mbuf = ast_malloc(maxmbuf))) {
-				*((char *) lf->cursor) = savechr;
-				return (char *)(CC_ERROR);
-			}
-			snprintf(buf, sizeof(buf), "_COMMAND MATCHESARRAY \"%s\" \"%s\"", lf->buffer, ptr);
-			fdsend(ast_consock, buf);
-			res = 0;
-			mbuf[0] = '\0';
-			while (!strstr(mbuf, AST_CLI_COMPLETE_EOF) && res != -1) {
-				if (mlen + 1024 > maxmbuf) {
-					/* Every step increment buffer 1024 bytes */
-					maxmbuf += 1024;
-					new_mbuf = ast_realloc(mbuf, maxmbuf);
-					if (!new_mbuf) {
-						ast_free(mbuf);
-						*((char *) lf->cursor) = savechr;
-						return (char *)(CC_ERROR);
-					}
-					mbuf = new_mbuf;
+		while (!strstr(mbuf, AST_CLI_COMPLETE_EOF) && res != -1) {
+			if (mlen + 1024 > maxmbuf) {
+				/* Expand buffer to the next 1024 byte increment plus a NULL terminator. */
+				maxmbuf = mlen + 1024;
+				new_mbuf = ast_realloc(mbuf, maxmbuf + 1);
+				if (!new_mbuf) {
+					ast_free(mbuf);
+					*((char *) lf->cursor) = savechr;
+
+					return (char *)(CC_ERROR);
 				}
-				/* Only read 1024 bytes at a time */
-				res = read(ast_consock, mbuf + mlen, 1024);
-				if (res > 0)
-					mlen += res;
+				mbuf = new_mbuf;
 			}
-			mbuf[mlen] = '\0';
-
-			matches = ast_el_strtoarr(mbuf);
-			ast_free(mbuf);
-		} else
-			matches = (char **) NULL;
-	} else {
-		char **p, *oldbuf=NULL;
-		nummatches = 0;
-		matches = ast_cli_completion_matches((char *)lf->buffer,ptr);
-		for (p = matches; p && *p; p++) {
-			if (!oldbuf || strcmp(*p,oldbuf))
-				nummatches++;
-			oldbuf = *p;
+			/* Only read 1024 bytes at a time */
+			res = read(ast_consock, mbuf + mlen, 1024);
+			if (res > 0) {
+				mlen += res;
+				mbuf[mlen] = '\0';
+			}
 		}
+		mbuf[mlen] = '\0';
+
+		matches = ast_el_strtoarr(mbuf);
+		ast_free(mbuf);
+	} else {
+		matches = ast_cli_completion_vector((char *)lf->buffer, ptr);
 	}
 
 	if (matches) {
 		int i;
-		int matches_num, maxlen, match_len;
+		int maxlen, match_len;
+		const char *best_match = AST_VECTOR_GET(matches, 0);
 
-		if (matches[0][0] != '\0') {
+		if (!ast_strlen_zero(best_match)) {
 			el_deletestr(editline, (int) len);
-			el_insertstr(editline, matches[0]);
+			el_insertstr(editline, best_match);
 			retval = CC_REFRESH;
 		}
 
-		if (nummatches == 1) {
+		if (AST_VECTOR_SIZE(matches) == 2) {
 			/* Found an exact match */
 			el_insertstr(editline, " ");
 			retval = CC_REFRESH;
 		} else {
 			/* Must be more than one match */
-			for (i = 1, maxlen = 0; matches[i]; i++) {
-				match_len = strlen(matches[i]);
-				if (match_len > maxlen)
+			for (i = 1, maxlen = 0; i < AST_VECTOR_SIZE(matches); i++) {
+				match_len = strlen(AST_VECTOR_GET(matches, i));
+				if (match_len > maxlen) {
 					maxlen = match_len;
+				}
 			}
-			matches_num = i - 1;
-			if (matches_num >1) {
-				fprintf(stdout, "\n");
-				ast_cli_display_match_list(matches, nummatches, maxlen);
-				retval = CC_REDISPLAY;
-			} else {
-				el_insertstr(editline," ");
-				retval = CC_REFRESH;
-			}
+
+			fprintf(stdout, "\n");
+			ast_cli_display_match_list(matches, maxlen);
+			retval = CC_REDISPLAY;
 		}
-		for (i = 0; matches[i]; i++)
-			ast_free(matches[i]);
-		ast_free(matches);
+		AST_VECTOR_CALLBACK_VOID(matches, ast_free);
+		AST_VECTOR_PTR_FREE(matches);
 	}
 
 	*((char *) lf->cursor) = savechr;
@@ -3508,13 +3464,15 @@ static void ast_readconfig(void)
 
 	/* Set default value */
 	option_dtmfminduration = AST_MIN_DTMF_DURATION;
+	ast_option_rtpusedynamic = 1;
+	ast_option_rtpptdynamic = 35;
 
 	/* init with buildtime config */
 	ast_copy_string(cfg_paths.config_dir, DEFAULT_CONFIG_DIR, sizeof(cfg_paths.config_dir));
 	ast_copy_string(cfg_paths.spool_dir, DEFAULT_SPOOL_DIR, sizeof(cfg_paths.spool_dir));
 	ast_copy_string(cfg_paths.module_dir, DEFAULT_MODULE_DIR, sizeof(cfg_paths.module_dir));
-	snprintf(cfg_paths.monitor_dir, sizeof(cfg_paths.monitor_dir), "%s/monitor", cfg_paths.spool_dir);
-	snprintf(cfg_paths.recording_dir, sizeof(cfg_paths.recording_dir), "%s/recording", cfg_paths.spool_dir);
+	ast_copy_string(cfg_paths.monitor_dir, DEFAULT_MONITOR_DIR, sizeof(cfg_paths.monitor_dir));
+	ast_copy_string(cfg_paths.recording_dir, DEFAULT_RECORDING_DIR, sizeof(cfg_paths.recording_dir));
 	ast_copy_string(cfg_paths.var_dir, DEFAULT_VAR_DIR, sizeof(cfg_paths.var_dir));
 	ast_copy_string(cfg_paths.data_dir, DEFAULT_DATA_DIR, sizeof(cfg_paths.data_dir));
 	ast_copy_string(cfg_paths.log_dir, DEFAULT_LOG_DIR, sizeof(cfg_paths.log_dir));
@@ -3584,7 +3542,6 @@ static void ast_readconfig(void)
 			ast_copy_string(cfg_paths.agi_dir, v->value, sizeof(cfg_paths.agi_dir));
 		} else if (!strcasecmp(v->name, "astrundir")) {
 			snprintf(cfg_paths.pid_path, sizeof(cfg_paths.pid_path), "%s/%s", v->value, "asterisk.pid");
-			snprintf(cfg_paths.socket_path, sizeof(cfg_paths.socket_path), "%s/%s", v->value, ast_config_AST_CTL);
 			ast_copy_string(cfg_paths.run_dir, v->value, sizeof(cfg_paths.run_dir));
 		} else if (!strcasecmp(v->name, "astmoddir")) {
 			ast_copy_string(cfg_paths.module_dir, v->value, sizeof(cfg_paths.module_dir));
@@ -3592,6 +3549,10 @@ static void ast_readconfig(void)
 			ast_copy_string(cfg_paths.sbin_dir, v->value, sizeof(cfg_paths.sbin_dir));
 		}
 	}
+
+	/* Combine astrundir and astctl settings. */
+	snprintf(cfg_paths.socket_path, sizeof(cfg_paths.socket_path), "%s/%s",
+		ast_config_AST_RUN_DIR, ast_config_AST_CTL);
 
 	for (v = ast_variable_browse(cfg, "options"); v; v = v->next) {
 		/* verbose level (-v at startup) */
@@ -3643,6 +3604,11 @@ static void ast_readconfig(void)
 		/* Cache recorded sound files to another directory during recording */
 		} else if (!strcasecmp(v->name, "cache_record_files")) {
 			ast_set2_flag(&ast_options, ast_true(v->value), AST_OPT_FLAG_CACHE_RECORD_FILES);
+#if !defined(LOW_MEMORY)
+		/* Cache media frames for performance */
+		} else if (!strcasecmp(v->name, "cache_media_frames")) {
+			ast_set2_flag(&ast_options, ast_true(v->value), AST_OPT_FLAG_CACHE_MEDIA_FRAMES);
+#endif
 		/* Specify cache directory */
 		}  else if (!strcasecmp(v->name, "record_cache_dir")) {
 			ast_copy_string(record_cache_dir, v->value, AST_CACHE_DIR_LEN);
@@ -3663,6 +3629,13 @@ static void ast_readconfig(void)
 			if (sscanf(v->value, "%30u", &option_dtmfminduration) != 1) {
 				option_dtmfminduration = AST_MIN_DTMF_DURATION;
 			}
+		} else if (!strcasecmp(v->name, "rtp_use_dynamic")) {
+			ast_option_rtpusedynamic = ast_true(v->value);
+		/* http://www.iana.org/assignments/rtp-parameters
+		 * RTP dynamic payload types start at 96 normally; extend down to 0 */
+		} else if (!strcasecmp(v->name, "rtp_pt_dynamic")) {
+			ast_parse_arg(v->value, PARSE_UINT32|PARSE_IN_RANGE,
+			              &ast_option_rtpptdynamic, 0, AST_RTP_PT_FIRST_DYNAMIC);
 		} else if (!strcasecmp(v->name, "maxcalls")) {
 			if ((sscanf(v->value, "%30d", &ast_option_maxcalls) != 1) || (ast_option_maxcalls < 0)) {
 				ast_option_maxcalls = 0;
@@ -3679,7 +3652,9 @@ static void ast_readconfig(void)
 		/* Set the maximum amount of open files */
 		} else if (!strcasecmp(v->name, "maxfiles")) {
 			ast_option_maxfiles = atoi(v->value);
-			set_ulimit(ast_option_maxfiles);
+			if (!ast_opt_remote) {
+				set_ulimit(ast_option_maxfiles);
+			}
 		/* What user to run as */
 		} else if (!strcasecmp(v->name, "runuser")) {
 			ast_copy_string(cfg_paths.run_user, v->value, sizeof(cfg_paths.run_user));
@@ -3762,11 +3737,42 @@ static void ast_readconfig(void)
 	ast_config_destroy(cfg);
 }
 
+static void read_pjproject_startup_options(void)
+{
+	struct ast_config *cfg;
+	struct ast_variable *v;
+	struct ast_flags config_flags = { CONFIG_FLAG_NOCACHE | CONFIG_FLAG_NOREALTIME };
+
+	ast_option_pjproject_log_level = DEFAULT_PJ_LOG_MAX_LEVEL;
+
+	cfg = ast_config_load2("pjproject.conf", "" /* core, can't reload */, config_flags);
+	if (!cfg
+		|| cfg == CONFIG_STATUS_FILEUNCHANGED
+		|| cfg == CONFIG_STATUS_FILEINVALID) {
+		/* We'll have to use defaults */
+		return;
+	}
+
+	for (v = ast_variable_browse(cfg, "startup"); v; v = v->next) {
+		if (!strcasecmp(v->name, "log_level")) {
+			if (sscanf(v->value, "%30d", &ast_option_pjproject_log_level) != 1) {
+				ast_option_pjproject_log_level = DEFAULT_PJ_LOG_MAX_LEVEL;
+			} else if (ast_option_pjproject_log_level < 0) {
+				ast_option_pjproject_log_level = 0;
+			} else if (MAX_PJ_LOG_MAX_LEVEL < ast_option_pjproject_log_level) {
+				ast_option_pjproject_log_level = MAX_PJ_LOG_MAX_LEVEL;
+			}
+		}
+	}
+
+	ast_config_destroy(cfg);
+}
+
 static void *monitor_sig_flags(void *unused)
 {
 	for (;;) {
 		struct pollfd p = { sig_alert_pipe[0], POLLIN, 0 };
-		int a;
+
 		ast_poll(&p, 1, -1);
 		if (sig_flags.need_reload) {
 			sig_flags.need_reload = 0;
@@ -3781,8 +3787,7 @@ static void *monitor_sig_flags(void *unused)
 				quit_handler(0, SHUTDOWN_NORMAL, 0);
 			}
 		}
-		if (read(sig_alert_pipe[0], &a, sizeof(a)) != sizeof(a)) {
-		}
+		ast_alertpipe_read(sig_alert_pipe);
 	}
 
 	return NULL;
@@ -4284,7 +4289,12 @@ int main(int argc, char *argv[])
 	/* Initial value of the maximum active system verbosity level. */
 	ast_verb_sys_level = option_verbose;
 
-	if (ast_tryconnect()) {
+	if (ast_sd_get_fd_un(SOCK_STREAM, ast_config_AST_SOCKET) > 0) {
+		ast_socket_is_sd = 1;
+	}
+
+	/* DO NOT perform check for existing daemon if systemd has CLI socket activation */
+	if (!ast_socket_is_sd && ast_tryconnect()) {
 		/* One is already running */
 		if (ast_opt_remote) {
 			multi_thread_safe = 1;
@@ -4321,7 +4331,11 @@ int main(int argc, char *argv[])
 static inline void check_init(int init_result, const char *name)
 {
 	if (init_result) {
-		printf("%s initialization failed.\n%s", name, term_quit());
+		if (ast_is_logger_initialized()) {
+			ast_log(LOG_ERROR, "%s initialization failed.  ASTERISK EXITING!\n%s", name, term_quit());
+		} else {
+			fprintf(stderr, "%s initialization failed.  ASTERISK EXITING!\n%s", name, term_quit());
+		}
 		ast_run_atexits(0);
 		exit(init_result == -2 ? 2 : 1);
 	}
@@ -4518,11 +4532,11 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 
 	check_init(ast_timing_init(), "Timing");
 	check_init(ast_ssl_init(), "SSL");
+	read_pjproject_startup_options();
 	check_init(ast_pj_init(), "Embedded PJProject");
 	check_init(app_init(), "App Core");
 	check_init(devstate_init(), "Device State Core");
 	check_init(ast_msg_init(), "Messaging API");
-	check_init(ast_data_init(), "Data Retrieval API");
 	check_init(ast_channels_init(), "Channel");
 	check_init(ast_endpoint_init(), "Endpoints");
 	check_init(ast_pickup_init(), "Call Pickup");
@@ -4531,20 +4545,7 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 	check_init(ast_device_state_engine_init(), "Device State Engine");
 	check_init(ast_presence_state_engine_init(), "Presence State Engine");
 	check_init(ast_dns_system_resolver_init(), "Default DNS resolver");
-	check_init(load_modules(1), "Module Preload");
-	check_init(ast_features_init(), "Call Features");
-	check_init(dnsmgr_init(), "DNS manager");
 	check_init(ast_security_stasis_init(), "Security Stasis Topic and Events");
-	check_init(ast_named_acl_init(), "Named ACL system");
-
-	ast_http_init();		/* Start the HTTP server, if needed */
-
-	check_init(ast_indications_init(), "Indication Tone Handling");
-	check_init(ast_cdr_engine_init(), "CDR Engine");
-
-	ast_dsp_init();
-	ast_udptl_init();
-
 	check_init(ast_image_init(), "Image");
 	check_init(ast_file_init(), "Generic File Format Support");
 	check_init(load_pbx(), "load_pbx");
@@ -4555,12 +4556,34 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 	check_init(load_pbx_app(), "PBX Application Support");
 	check_init(load_pbx_hangup_handler(), "PBX Hangup Handler Support");
 	check_init(ast_local_init(), "Local Proxy Channel Driver");
+
+	/* We should avoid most config loads before this point as they can't use realtime. */
+	check_init(load_modules(1), "Module Preload");
+
+	/* Initialize core modules that have config files.  These should be converted to
+	 * built-in modules with load priority after realtime, that way users will not
+	 * need to 'preload' realtime modules. */
+	check_init(ast_features_init(), "Call Features");
+	check_init(dnsmgr_init(), "DNS manager");
+	check_init(ast_named_acl_init(), "Named ACL system");
+	ast_http_init();
+	check_init(ast_indications_init(), "Indication Tone Handling");
+	check_init(ast_cdr_engine_init(), "CDR Engine");
+	ast_dsp_init();
+	ast_udptl_init();
 	check_init(ast_cel_engine_init(), "CEL Engine");
 	check_init(init_manager(), "Asterisk Manager Interface");
 	check_init(ast_enum_init(), "ENUM Support");
 	check_init(ast_cc_init(), "Call Completion Supplementary Services");
-	check_init(ast_sounds_index_init(), "Sounds Indexer");
+
+	/* Load remaining modules */
 	check_init(load_modules(0), "Module");
+
+	/*
+	 * This is initialized after the dynamic modules load to avoid repeatedly
+	 * reindexing sounds for every format module load.
+	 */
+	check_init(ast_sounds_index_init(), "Sounds Indexer");
 
 	/*
 	 * This has to load after the dynamic modules load, as items in the media
@@ -4580,9 +4603,7 @@ static void asterisk_daemon(int isroot, const char *runuser, const char *rungrou
 		consolethread = pthread_self();
 	}
 
-	if (pipe(sig_alert_pipe)) {
-		sig_alert_pipe[0] = sig_alert_pipe[1] = -1;
-	}
+	ast_alertpipe_init(sig_alert_pipe);
 
 	ast_process_pending_reloads();
 

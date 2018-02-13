@@ -66,6 +66,8 @@ enum ast_option_flags {
 	AST_OPT_FLAG_CACHE_RECORD_FILES = (1 << 13),
 	/*! Display timestamp in CLI verbose output */
 	AST_OPT_FLAG_TIMESTAMP = (1 << 14),
+	/*! Cache media frames for performance */
+	AST_OPT_FLAG_CACHE_MEDIA_FRAMES = (1 << 15),
 	/*! Reconnect */
 	AST_OPT_FLAG_RECONNECT = (1 << 16),
 	/*! Transmit Silence during Record() and DTMF Generation */
@@ -99,7 +101,7 @@ enum ast_option_flags {
 };
 
 /*! These are the options that set by default when Asterisk starts */
-#define AST_DEFAULT_OPTIONS AST_OPT_FLAG_TRANSCODE_VIA_SLIN
+#define AST_DEFAULT_OPTIONS (AST_OPT_FLAG_TRANSCODE_VIA_SLIN | AST_OPT_FLAG_CACHE_MEDIA_FRAMES)
 
 #define ast_opt_exec_includes		ast_test_flag(&ast_options, AST_OPT_FLAG_EXEC_INCLUDES)
 #define ast_opt_no_fork			ast_test_flag(&ast_options, AST_OPT_FLAG_NO_FORK)
@@ -116,6 +118,7 @@ enum ast_option_flags {
 #define ast_opt_stdexten_macro		ast_test_flag(&ast_options, AST_OPT_FLAG_STDEXTEN_MACRO)
 #define ast_opt_dump_core		ast_test_flag(&ast_options, AST_OPT_FLAG_DUMP_CORE)
 #define ast_opt_cache_record_files	ast_test_flag(&ast_options, AST_OPT_FLAG_CACHE_RECORD_FILES)
+#define ast_opt_cache_media_frames	ast_test_flag(&ast_options, AST_OPT_FLAG_CACHE_MEDIA_FRAMES)
 #define ast_opt_timestamp		ast_test_flag(&ast_options, AST_OPT_FLAG_TIMESTAMP)
 #define ast_opt_reconnect		ast_test_flag(&ast_options, AST_OPT_FLAG_RECONNECT)
 #define ast_opt_transmit_silence	ast_test_flag(&ast_options, AST_OPT_FLAG_TRANSMIT_SILENCE)
@@ -131,6 +134,47 @@ enum ast_option_flags {
 #define ast_opt_lock_confdir		ast_test_flag(&ast_options, AST_OPT_FLAG_LOCK_CONFIG_DIR)
 #define ast_opt_generic_plc         ast_test_flag(&ast_options, AST_OPT_FLAG_GENERIC_PLC)
 #define ast_opt_ref_debug           ast_test_flag(&ast_options, AST_OPT_FLAG_REF_DEBUG)
+
+/*! Maximum log level defined by PJPROJECT. */
+#define MAX_PJ_LOG_MAX_LEVEL		6
+/*!
+ * Normal PJPROJECT active log level used by Asterisk.
+ *
+ * These levels are usually mapped to Error and
+ * Warning Asterisk log levels which shouldn't
+ * normally be suppressed.
+ */
+#define DEFAULT_PJ_LOG_MAX_LEVEL	2
+
+/*!
+ * \brief Get maximum log level pjproject was compiled with.
+ *
+ * \details
+ * Determine the maximum log level the pjproject we are running
+ * with supports.
+ *
+ * When pjproject is initially loaded the default log level in
+ * effect is the maximum log level the library was compiled to
+ * generate.  We must save this value off somewhere before we
+ * change it to what we want to use as the default level.
+ *
+ * \note This must be done before calling pj_init() so the level
+ * we want to use as the default level is in effect while the
+ * library initializes.
+ */
+#define AST_PJPROJECT_INIT_LOG_LEVEL()							\
+	do {														\
+		if (ast_pjproject_max_log_level < 0) {					\
+			ast_pjproject_max_log_level = pj_log_get_level();	\
+		}														\
+		pj_log_set_level(ast_option_pjproject_log_level);		\
+	} while (0)
+
+/*! Current linked pjproject maximum logging level */
+extern int ast_pjproject_max_log_level;
+
+/*! Current pjproject logging level */
+extern int ast_option_pjproject_log_level;
 
 extern struct ast_flags ast_options;
 
@@ -154,6 +198,9 @@ extern char dahdi_chan_name[AST_CHANNEL_NAME];
 extern int dahdi_chan_name_len;
 
 extern int ast_language_is_prefix;
+
+extern int ast_option_rtpusedynamic;
+extern unsigned int ast_option_rtpptdynamic;
 
 #if defined(__cplusplus) || defined(c_plusplus)
 }

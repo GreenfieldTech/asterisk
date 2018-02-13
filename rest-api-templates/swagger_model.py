@@ -647,6 +647,7 @@ class ApiDeclaration(Stringify):
         self.api_version = api_decl_json.get('apiVersion')
         self.base_path = api_decl_json.get('basePath')
         self.resource_path = api_decl_json.get('resourcePath')
+        self.requires_modules = api_decl_json.get('requiresModules') or []
         api_json = api_decl_json.get('apis') or []
         self.apis = [
             Api().load(j, processor, context) for j in api_json]
@@ -737,7 +738,7 @@ class ResourceListing(Stringify):
         self.swagger_version = resources_json.get('swaggerVersion')
         if not self.swagger_version in SWAGGER_VERSIONS:
             raise SwaggerError(
-                "Unsupported Swagger version %s" % swagger_version, context)
+                "Unsupported Swagger version %s" % self.swagger_version, context)
 
         validate_required_fields(resources_json, self.required_fields, context)
         self.api_version = resources_json['apiVersion']

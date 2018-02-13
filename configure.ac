@@ -1,12 +1,4 @@
-# Process this file with autoconf to produce a configure script.
-#
-# Make sure we use autoconf 2.60 to generate the "configure" script,
-# in case we want to commit it. Other than that, version 2.59 is
-# perfectly fine for our purposes, so people who want to modify
-# this file just have to remember to set the AC_PREREQ argument
-# to something that suits their needs.
-
-AC_PREREQ(2.60)
+AC_PREREQ(2.60a)
 
 AC_INIT([asterisk], [trunk], [https://issues.asterisk.org])
 
@@ -17,10 +9,7 @@ AC_CANONICAL_HOST
 # check existence of the package
 AC_CONFIG_SRCDIR([main/asterisk.c])
 
-AC_CONFIG_AUX_DIR(`pwd`)
-
 AC_COPYRIGHT("Asterisk")
-AC_REVISION($Revision$)
 
 # preserve any CFLAGS or LDFLAGS that may be set
 # NOTE: This must be done before calling any macros that end up
@@ -178,7 +167,7 @@ case "${host_os}" in
      OSARCH=cygwin
      PBX_WINARCH=1
      ;;
-     linux-gnueabi* |  linux-gnuspe)
+     linux-gnu*)
      OSARCH=linux-gnu
      ;;
      linux-musl*)
@@ -263,6 +252,8 @@ AC_SUBST(GNU_LD)
 
 AC_PATH_PROG([BISON], [bison], :)
 AC_PATH_PROG([CMP], [cmp], :)
+AC_PATH_PROG([CAT], [cat], :)
+AC_PATH_PROG([CUT], [cut], :)
 AC_PATH_PROG([FLEX], [flex], :)
 AC_PATH_PROG([GREP], [grep], :)
 AC_PATH_PROG([PYTHON], [python], :)
@@ -280,20 +271,36 @@ AC_PATH_PROG([RUBBER], [rubber], :)
 AC_PATH_PROG([CATDVI], [catdvi], :)
 AC_PATH_PROG([KPATHSEA], [kpsewhich], :)
 AC_PATH_PROG([XMLLINT], [xmllint], :)
-AC_PATH_PROG([XMLSTARLET], [xmlstarlet], :)
+AC_PATH_PROGS([XMLSTARLET], [xmlstarlet xml], :)
 AC_PATH_PROG([BASH], [bash], :)
 AC_PATH_PROG([GIT], [git], :)
 AC_PATH_PROG([ALEMBIC], [alembic], :)
+AC_PATH_PROG([BZIP2], [bzip2], :)
+AC_PATH_PROG([TAR], [tar], :)
+AC_PATH_PROG([PATCH], [patch], :)
+AC_PATH_PROG([SED], [sed], :)
+AC_PATH_PROG([NM], [nm], :)
+
 if test "${WGET}" != ":" ; then
   DOWNLOAD=${WGET}
+  DOWNLOAD_TO_STDOUT="${WGET} -q -O-"
+  DOWNLOAD_TIMEOUT='--timeout=$1'
 else if test "${CURL}" != ":" ; then
   DOWNLOAD="${CURL} -O --progress-bar -w \"%{url_effective}\n\""
+  DOWNLOAD_TO_STDOUT="${CURL} -Ls"
+  DOWNLOAD_TIMEOUT='--max-time $(or $2,$1)'
 else
   AC_PATH_PROG([FETCH], [fetch], [:])
   DOWNLOAD=${FETCH}
+  DOWNLOAD_TO_STDOUT="${FETCH} -o-"
+  DOWNLOAD_TIMEOUT='--timeout=$(or $2,$1)'
 fi
 fi
+
 AC_SUBST(DOWNLOAD)
+AC_SUBST(DOWNLOAD_TO_STDOUT)
+AC_SUBST(DOWNLOAD_TIMEOUT)
+
 AC_PATH_PROG([LDCONFIG], [ldconfig], :)
 AC_PATH_PROG([SHA1SUM], [sha1sum], $ac_aux_dir/build_tools/sha1sum-sh)
 AC_PATH_PROG([OPENSSL], [openssl], :)
@@ -390,6 +397,10 @@ AC_SUBST(NOISY_BUILD)
 AC_SUBST(AST_DEVMODE)
 AC_SUBST(AST_DEVMODE_STRICT)
 
+AST_OPTION_ONLY([download-cache], [AST_DOWNLOAD_CACHE], [cached sound AND external module tarfiles], [])
+AST_OPTION_ONLY([sounds-cache], [SOUNDS_CACHE_DIR], [cached sound tarfiles], [])
+AST_OPTION_ONLY([externals-cache], [EXTERNALS_CACHE_DIR], [cached external module tarfiles], [])
+
 AST_CODE_COVERAGE=no
 AC_ARG_ENABLE([coverage],
 	[AS_HELP_STRING([--enable-coverage],
@@ -403,6 +414,19 @@ AC_SUBST(AST_CODE_COVERAGE)
 
 AST_CHECK_RAII()
 AST_CHECK_STRSEP_ARRAY_BOUNDS()
+
+PJPROJECT_BUNDLED=yes
+AH_TEMPLATE(m4_bpatsubst([[HAVE_PJPROJECT_BUNDLED]], [(.*)]), [Define to 1 when using the bundled pjproject.])
+
+AC_ARG_WITH([pjproject-bundled],
+	[AS_HELP_STRING([--with-pjproject-bundled],
+		[Use bundled pjproject libraries (default)])],
+	[case "${withval}" in
+	      n|no) PJPROJECT_BUNDLED=no ;;
+	      *) PJPROJECT_BUNDLED=yes ;;
+	esac])
+
+THIRD_PARTY_CONFIGURE()
 
 # AST_EXT_LIB_SETUP is used to tell configure to handle variables for
 # various packages.
@@ -452,6 +476,7 @@ AST_EXT_LIB_SETUP([KQUEUE], [kqueue support], [kqueue])
 AST_EXT_LIB_SETUP([LDAP], [OpenLDAP], [ldap])
 AST_LIBCURL_CHECK_CONFIG([], [7.10.1])
 AST_EXT_LIB_SETUP([LIBEDIT], [NetBSD Editline library], [libedit], [, use 'internal' Editline otherwise])
+AST_EXT_LIB_SETUP_OPTIONAL([LIBEDIT_IS_UNICODE], [Libedit compiled for unicode], [LIBEDIT], [libedit])
 AST_EXT_LIB_SETUP([LIBXML2], [LibXML2], [libxml2])
 AST_EXT_LIB_SETUP([LIBXSLT], [LibXSLT], [libxslt])
 AST_EXT_LIB_SETUP_OPTIONAL([LIBXSLT_CLEANUP], [LibXSLT Library Cleanup Function], [LIBXSLT], [libxslt])
@@ -468,32 +493,14 @@ AST_EXT_LIB_SETUP([NEWT], [newt], [newt])
 AST_EXT_LIB_SETUP([OGG], [OGG], [ogg])
 AST_EXT_LIB_SETUP([OPENR2], [MFR2], [openr2])
 AST_EXT_LIB_SETUP([OPUS], [Opus], [opus])
+AST_EXT_LIB_SETUP([OPUSFILE], [Opusfile], [opusfile])
 AST_EXT_LIB_SETUP([OSPTK], [OSP Toolkit], [osptk])
 AST_EXT_LIB_SETUP([OSS], [Open Sound System], [oss])
 AST_EXT_LIB_SETUP([PGSQL], [PostgreSQL], [postgres])
+AST_EXT_LIB_SETUP([BEANSTALK], [Beanstalk Job Queue], [beanstalk])
 
+if test "x${PBX_PJPROJECT}" != "x1" ; then
 AST_EXT_LIB_SETUP([PJPROJECT], [PJPROJECT], [pjproject])
-PJPROJECT_BUNDLED=no
-AH_TEMPLATE(m4_bpatsubst([[HAVE_PJPROJECT_BUNDLED]], [(.*)]), [Define to 1 when using the bundled pjproject.])
-
-AC_ARG_WITH([pjproject-bundled],
-	[AS_HELP_STRING([--with-pjproject-bundled],
-		[Use bundled pjproject libraries])],
-	[case "${enableval}" in
-	      n|no) PJPROJECT_BUNDLED=no ;;
-	      *) PJPROJECT_BUNDLED=yes ;;
-	esac])
-AC_SUBST(PJPROJECT_BUNDLED)
-
-if test "$PJPROJECT_BUNDLED" = "yes" -a "${ac_mandatory_list#*PJPROJECT*}" != "$ac_mandatory_list" ; then
-   AC_MSG_ERROR(--with-pjproject and --with-pjproject-bundled can't both be specified)
-fi
-
-if test "$PJPROJECT_BUNDLED" = "yes" ; then
-   ac_mandatory_list="$ac_mandatory_list PJPROJECT"
-   PJPROJECT_DIR="${ac_top_build_prefix}third-party/pjproject"
-fi
-
 AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_DLG_CREATE_UAS_AND_INC_LOCK], [PJSIP Dialog Create UAS with Incremented Lock], [PJPROJECT], [pjsip])
 AST_EXT_LIB_SETUP_OPTIONAL([PJ_TRANSACTION_GRP_LOCK], [PJSIP Transaction Group Lock Support], [PJPROJECT], [pjsip])
 AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_REPLACE_MEDIA_STREAM], [PJSIP Media Stream Replacement Support], [PJPROJECT], [pjsip])
@@ -503,6 +510,9 @@ AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_EXTERNAL_RESOLVER], [PJSIP External Resolver S
 AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_TLS_TRANSPORT_PROTO], [PJSIP TLS Transport proto field support], [PJPROJECT], [pjsip])
 AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_EVSUB_GRP_LOCK], [PJSIP EVSUB Group Lock support], [PJPROJECT], [pjsip])
 AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_INV_SESSION_REF], [PJSIP INVITE Session Reference Count support], [PJPROJECT], [pjsip])
+AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_AUTH_CLT_DEINIT], [pjsip_auth_clt_deinit support], [PJPROJECT], [pjsip])
+AST_EXT_LIB_SETUP_OPTIONAL([PJSIP_TSX_LAYER_FIND_TSX2], [pjsip_tsx_layer_find_tsx2 support], [PJPROJECT], [pjsip])
+fi
 
 AST_EXT_LIB_SETUP([POPT], [popt], [popt])
 AST_EXT_LIB_SETUP([PORTAUDIO], [PortAudio], [portaudio])
@@ -533,11 +543,11 @@ AST_EXT_LIB_SETUP_OPTIONAL([PRI_REVERSE_CHARGE], [ISDN reverse charge], [PRI], [
 # ------------------------------------^
 AST_EXT_LIB_SETUP([PWLIB], [PWlib], [pwlib])
 AST_EXT_LIB_SETUP([RADIUS], [Radius Client], [radius])
+AST_EXT_LIB_SETUP([FFTW3], [LIBFFTW3], [fftw3])
 AST_EXT_LIB_SETUP([RESAMPLE], [LIBRESAMPLE], [resample])
+AST_EXT_LIB_SETUP([SNDFILE], [libsndfile], [sndfile])
 AST_EXT_LIB_SETUP([SDL], [Sdl], [sdl])
 AST_EXT_LIB_SETUP([SDL_IMAGE], [Sdl Image], [SDL_image])
-AST_OPTION_ONLY([sounds-cache], [SOUNDS_CACHE_DIR], [cached sound tarfiles], [])
-AST_OPTION_ONLY([externals-cache], [EXTERNALS_CACHE_DIR], [cached external module tarfiles], [])
 AST_EXT_LIB_SETUP([SPANDSP], [SPANDSP], [spandsp])
 AST_EXT_LIB_SETUP([SS7], [ISDN SS7], [ss7])
 AST_EXT_LIB_SETUP([SPEEX], [Speex], [speex])
@@ -571,9 +581,39 @@ AST_EXT_LIB_SETUP([ZLIB], [zlib compression], [z])
 
 AC_FUNC_ALLOCA
 AC_HEADER_DIRENT
+if test -z $ac_header_dirent -o "$ac_header_dirent" = "no"; then
+  AC_MSG_ERROR([*** Could not find dirent header that defines 'DIR'.])
+fi
+
 AC_HEADER_STDC
+if test "$ac_cv_header_stdc" != "yes"; then
+  AC_MSG_ERROR([*** ANSI C header files not found.])
+fi
+
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([arpa/inet.h fcntl.h inttypes.h libintl.h limits.h locale.h malloc.h netdb.h netinet/in.h stddef.h stdint.h stdlib.h string.h strings.h sys/event.h sys/file.h sys/ioctl.h sys/param.h sys/socket.h sys/time.h syslog.h termios.h unistd.h utime.h arpa/nameser.h sys/io.h])
+if test "$ac_cv_header_sys_wait_h" != "yes"; then
+  AC_MSG_ERROR([*** POSIX.1 compatible sys/wait.h is required.])
+fi
+
+AC_HEADER_RESOLV
+if test "$ac_cv_header_resolv_h" != "yes"; then
+  AC_MSG_ERROR([*** resolv.h is required.])
+fi
+
+# Check for headers that are unconditionally required on all platforms.  Do not use
+# this to check for headers that are only needed by modules.
+AC_CHECK_HEADERS([ \
+  arpa/nameser.h assert.h ctype.h dlfcn.h errno.h fcntl.h float.h grp.h \
+  inttypes.h limits.h locale.h math.h pwd.h netinet/in.h regex.h \
+  sched.h stdarg.h stdint.h stdio.h stdlib.h string.h syslog.h \
+  sys/file.h sys/ioctl.h sys/param.h sys/resource.h sys/socket.h sys/stat.h \
+  sys/time.h sys/types.h sys/un.h \
+  termios.h time.h unistd.h \
+], [], [
+  AC_MSG_ERROR([*** A required header was not found.])
+])
+
+AC_CHECK_HEADERS([arpa/inet.h libintl.h malloc.h netdb.h stddef.h strings.h sys/event.h utime.h])
 
 # Any one of these packages support a mandatory requirement, so we want to check on them as early as possible.
 AST_EXT_LIB_CHECK([TERMCAP], [termcap], [tgetent], [])
@@ -646,12 +686,14 @@ AC_ARG_ENABLE([xmldoc],
 	[AS_HELP_STRING([--disable-xmldoc],
 		[Explicitly disable XML documentation])],
 	[case "${enableval}" in
-		y|ye|yes) disable_xmldoc=no ;;
-		n|no)  disable_xmldoc=yes ;;
+		y|ye|yes) DISABLE_XMLDOC=no ;;
+		n|no)  DISABLE_XMLDOC=yes ;;
 		*) AC_MSG_ERROR(bad value ${enableval} for --disable-xmldoc)  ;;
-	esac], [disable_xmldoc=no])
+	esac], [DISABLE_XMLDOC=no])
 
-if test "${disable_xmldoc}" != "yes"; then
+AC_SUBST([DISABLE_XMLDOC])
+if test "${DISABLE_XMLDOC}" != "yes"; then
+        AC_DEFINE([AST_XML_DOCS], 1, [Define to enable XML documentation.])
         AST_EXT_LIB_CHECK([LIBXSLT], [xslt], [xsltLoadStylesheetPI], [libxslt/xsltInternals.h], [${LIBXML2_LIB}], [${LIBXML2_INCLUDE}])
         AST_EXT_LIB_CHECK([LIBXSLT_CLEANUP], [xslt], [xsltCleanupGlobals], [libxslt/xsltInternals.h], [${LIBXML2_LIB}], [${LIBXML2_INCLUDE}])
 
@@ -807,10 +849,6 @@ AC_ARG_ENABLE([asteriskssl],
 		*) AC_MSG_ERROR(bad value ${enableval} for --disable-asteriskssl)  ;;
 	esac], [AST_ASTERISKSSL=yes])
 AC_SUBST(AST_ASTERISKSSL)
-
-# https support (in main/http.c) uses funopen on BSD systems,
-# fopencookie on linux
-AC_CHECK_FUNCS([funopen fopencookie])
 
 AC_CHECK_FUNCS([inet_aton])
 
@@ -1024,13 +1062,27 @@ AC_LINK_IFELSE(
 # for FreeBSD thr_self
 AC_CHECK_HEADERS([sys/thr.h])
 
-AC_MSG_CHECKING(for compiler atomic operations)
+AC_MSG_CHECKING(for compiler sync operations)
 AC_LINK_IFELSE(
 [AC_LANG_PROGRAM([], [int foo1; int foo2 = __sync_fetch_and_add(&foo1, 1);])],
 AC_MSG_RESULT(yes)
-AC_DEFINE([HAVE_GCC_ATOMICS], 1, [Define to 1 if your GCC C compiler provides atomic operations.]),
+ax_cv_have_gcc_atomics=1
+AC_DEFINE([HAVE_GCC_ATOMICS], 1, [Define to 1 if your GCC C compiler provides __sync atomic operations.]),
 AC_MSG_RESULT(no)
 )
+
+AC_MSG_CHECKING(for compiler atomic operations)
+AC_LINK_IFELSE(
+[AC_LANG_PROGRAM([], [int foo1; int foo2 = __atomic_fetch_add(&foo1, 1, __ATOMIC_RELAXED);])],
+AC_MSG_RESULT(yes)
+ax_cv_have_c_atomics=1
+AC_DEFINE([HAVE_C_ATOMICS], 1, [Define to 1 if your C compiler provides __atomic operations.]),
+AC_MSG_RESULT(no)
+)
+
+if test -z $ax_cv_have_c_atomics$ax_cv_have_gcc_atomics; then
+	AC_MSG_ERROR([*** Atomic operations are not supported by your compiler.])
+fi
 
 # glibc, AFAIK, is the only C library that makes printing a NULL to a string safe.
 AC_MSG_CHECKING([if your system printf is NULL-safe.])
@@ -1086,6 +1138,16 @@ if test "${ac_cv_have_variable_fdset}x" = "0x"; then
 		AC_DEFINE([CONFIGURE_RAN_AS_ROOT], 1, [Some configure tests will unexpectedly fail if configure is run by a non-root user.  These may be able to be tested at runtime.]))
 fi
 
+AC_MSG_CHECKING([if we have usable eventfd support])
+AC_RUN_IFELSE(
+  [AC_LANG_PROGRAM([#include <sys/eventfd.h>],
+      [return eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE) == -1;])],
+  AC_MSG_RESULT(yes)
+  AC_DEFINE([HAVE_EVENTFD], 1, [Define to 1 if your system supports eventfd and the EFD_NONBLOCK and EFD_SEMAPHORE flags.]),
+  AC_MSG_RESULT(no),
+  AC_MSG_RESULT(cross-compile)
+)
+
 AST_GCC_ATTRIBUTE(pure)
 AST_GCC_ATTRIBUTE(malloc)
 AST_GCC_ATTRIBUTE(const)
@@ -1096,7 +1158,14 @@ AST_GCC_ATTRIBUTE(sentinel)
 AST_GCC_ATTRIBUTE(warn_unused_result)
 AST_GCC_ATTRIBUTE(may_alias)
 AST_GCC_ATTRIBUTE(constructor)
+if test "$ax_cv_have_func_attribute_constructor" != "1"; then
+	AC_MSG_ERROR([*** Function constructor attribute is not supported by your compiler.])
+fi
+
 AST_GCC_ATTRIBUTE(destructor)
+if test "$ax_cv_have_func_attribute_destructor" != "1"; then
+	AC_MSG_ERROR([*** Function destructor attribute is not supported by your compiler.])
+fi
 AST_GCC_ATTRIBUTE(noreturn,noreturn)
 
 AC_MSG_CHECKING(for -fsanitize=address support)
@@ -1108,7 +1177,7 @@ AC_COMPILE_IFELSE(
 	[AC_LANG_PROGRAM([], [int x = 1;])],
 	AC_MSG_RESULT(yes)
 	[AST_ADDRESS_SANITIZER=1],
-	[AST_ADDRESS_SANITIZER=]
+	[AST_ADDRESS_SANITIZER=0]
 	AC_MSG_RESULT(no)
 )
 CFLAGS="${saved_sanitize_CFLAGS}"
@@ -1124,7 +1193,7 @@ AC_COMPILE_IFELSE(
 	[AC_LANG_PROGRAM([], [int x = 1;])],
 	AC_MSG_RESULT(yes)
 	[AST_THREAD_SANITIZER=1],
-	[AST_THREAD_SANITIZER=]
+	[AST_THREAD_SANITIZER=0]
 	AC_MSG_RESULT(no)
 )
 CFLAGS="${saved_sanitize_CFLAGS}"
@@ -1163,31 +1232,8 @@ CFLAGS="${saved_sanitize_CFLAGS}"
 LDFLAGS="${saved_sanitize_LDFLAGS}"
 AC_SUBST(AST_UNDEFINED_SANITIZER)
 
-AC_MSG_CHECKING(for -ffunction-sections support)
-saved_CFLAGS="${CFLAGS}"
-CFLAGS="${CFLAGS} -ffunction-sections"
-AC_COMPILE_IFELSE(
-	[AC_LANG_PROGRAM([], [int x = 1;])],
-	AC_MSG_RESULT(yes)
-	[saved_LDFLAGS="${LDFLAGS}"]
-	[LDFLAGS="${LDFLAGS} -Wl,--gc-sections"]
-	AC_MSG_CHECKING(for --gc-sections support)
-	AC_LINK_IFELSE(
-		[AC_LANG_PROGRAM([], [int x = 1;])],
-		AC_MSG_RESULT(yes)
-		[GC_CFLAGS="-ffunction-sections"]
-		[[GC_LDFLAGS="-Wl,--gc-sections"]],
-		AC_MSG_RESULT(no)
-	)
-	[LDFLAGS="${saved_LDFLAGS}"],
-	AC_MSG_RESULT(no)
-)
-CFLAGS="${saved_CFLAGS}"
-AC_SUBST(GC_CFLAGS)
-AC_SUBST(GC_LDFLAGS)
-
 AC_MSG_CHECKING(for -Wdeclaration-after-statement support)
-if $(${CC} -Wdeclaration-after-statement -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
+if $(${CC} -Wdeclaration-after-statement -Werror -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
 	AC_MSG_RESULT(yes)
 	AST_DECLARATION_AFTER_STATEMENT=-Wdeclaration-after-statement
 else
@@ -1226,8 +1272,18 @@ else
 fi
 AC_SUBST(AST_NO_STRICT_OVERFLOW)
 
+AC_MSG_CHECKING(for -Wno-format-truncation)
+if $(${CC} -Wno-format-truncation -Werror -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
+	AC_MSG_RESULT(yes)
+	AST_NO_FORMAT_TRUNCATION=-Wno-format-truncation
+else
+	AC_MSG_RESULT(no)
+	AST_NO_FORMAT_TRUNCATION=
+fi
+AC_SUBST(AST_NO_FORMAT_TRUNCATION)
+
 AC_MSG_CHECKING(for -Wshadow)
-if $(${CC} -Wshadow -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
+if $(${CC} -Wshadow -Werror -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
 	AC_MSG_RESULT(yes)
 	AST_SHADOW_WARNINGS=-Wshadow
 else
@@ -1335,6 +1391,18 @@ AC_LINK_IFELSE(
 	AC_MSG_RESULT(no)
 )
 
+AC_MSG_CHECKING(for BIND_8_COMPAT required)
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+[[
+#undef BIND_8_COMPAT
+#include <arpa/nameser.h>
+]],
+[[int x = NXDOMAIN]])],
+AC_MSG_RESULT(no),
+AC_MSG_RESULT(yes)
+[BIND8_CFLAGS=-DBIND_8_COMPAT])
+AC_SUBST(BIND8_CFLAGS)
+
 AST_C_DEFINE_CHECK([GLOB_NOMAGIC], [GLOB_NOMAGIC], [glob.h])
 
 AST_C_DEFINE_CHECK([GLOB_BRACE], [GLOB_BRACE], [glob.h])
@@ -1342,9 +1410,6 @@ AST_C_DEFINE_CHECK([GLOB_BRACE], [GLOB_BRACE], [glob.h])
 AST_C_DEFINE_CHECK([RTLD_NOLOAD], [RTLD_NOLOAD], [dlfcn.h])
 
 AST_C_DEFINE_CHECK([IP_MTU_DISCOVER], [IP_MTU_DISCOVER], [netinet/in.h])
-
-AC_CHECK_HEADER([libkern/OSAtomic.h],
-                [AC_DEFINE_UNQUOTED([HAVE_OSX_ATOMICS], 1, [Define to 1 if OSX atomic operations are supported.])])
 
 AC_CHECK_SIZEOF([int])
 AC_CHECK_SIZEOF([long])
@@ -1523,11 +1588,14 @@ if test "${USE_LIBEDIT}" != "no"; then
    if test "${LIBEDIT_SYSTEM}" = "yes"; then
       AST_PKG_CONFIG_CHECK(LIBEDIT, libedit)
       if test "$PBX_LIBEDIT" = "1"; then
-	 LIBEDIT_INTERNAL="no"
+      LIBEDIT_INTERNAL="no"
       fi
    fi
    if test "${LIBEDIT_INTERNAL}" = "yes"; then
       PBX_LIBEDIT=1
+      LIBEDIT_IS_UNICODE=no
+   else
+      AST_C_COMPILE_CHECK([LIBEDIT_IS_UNICODE], [el_rfunc_t *callback;], [histedit.h], [], [Testing for libedit unicode support])
    fi
 fi
 
@@ -2133,6 +2201,8 @@ AST_EXT_LIB_CHECK([BKTR], [c], [backtrace], [execinfo.h])
 
 AST_EXT_LIB_CHECK([BLUETOOTH], [bluetooth], [ba2str], [bluetooth/bluetooth.h])
 
+AST_EXT_LIB_CHECK([BEANSTALK], [beanstalk], [bs_version], [beanstalk.h])
+
 # possible places for oss definitions
 AST_EXT_LIB_CHECK([OSS], [ossaudio], [], [linux/soundcard.h])
 AST_EXT_LIB_CHECK([OSS], [ossaudio], [], [sys/soundcard.h])
@@ -2198,9 +2268,7 @@ if test "${PG_CONFIG}" != No; then
 fi
 
 if test "$USE_PJPROJECT" != "no" ; then
-   if test "$PJPROJECT_BUNDLED" = "yes" ; then
-       PJPROJECT_CONFIGURE([$PJPROJECT_DIR])
-   else
+   if test "$PJPROJECT_BUNDLED" = "no" ; then
       AST_PKG_CONFIG_CHECK([PJPROJECT], [libpjproject])
 
       AST_EXT_LIB_CHECK([PJSIP_DLG_CREATE_UAS_AND_INC_LOCK], [pjsip], [pjsip_dlg_create_uas_and_inc_lock], [pjsip.h], [$PJPROJECT_LIBS], [$PJPROJECT_CFLAGS])
@@ -2228,6 +2296,9 @@ if test "$USE_PJPROJECT" != "no" ; then
 
       AST_EXT_LIB_CHECK([PJSIP_EVSUB_GRP_LOCK], [pjsip], [pjsip_evsub_add_ref], [pjsip.h], [$PJPROJECT_LIB], [$PJPROJECT_CFLAGS])
       AST_EXT_LIB_CHECK([PJSIP_INV_SESSION_REF], [pjsip], [pjsip_inv_add_ref], [pjsip.h], [$PJPROJECT_LIB], [$PJPROJECT_CFLAGS])
+      AST_EXT_LIB_CHECK([PJSIP_AUTH_CLT_DEINIT], [pjsip], [pjsip_auth_clt_deinit], [pjsip.h], [$PJPROJECT_LIB], [$PJPROJECT_CFLAGS])
+      AST_EXT_LIB_CHECK([PJSIP_EVSUB_SET_UAS_TIMEOUT], [pjsip], [pjsip_evsub_set_uas_timeout], [pjsip.h], [$PJPROJECT_LIB], [$PJPROJECT_CFLAGS])
+      AST_EXT_LIB_CHECK([PJSIP_TSX_LAYER_FIND_TSX2], [pjsip], [pjsip_tsx_layer_find_tsx2], [pjsip.h], [$PJPROJECT_LIB], [$PJPROJECT_CFLAGS])
    fi
 fi
 
@@ -2267,6 +2338,8 @@ AST_EXT_LIB_CHECK([PRI_REVERSE_CHARGE], [pri], [pri_sr_set_reversecharge], [libp
 # ------------------------------------^
 
 AST_EXT_LIB_CHECK([RESAMPLE], [resample], [resample_open], [libresample.h], [-lm])
+AST_EXT_LIB_CHECK([FFTW3], [fftw3], [fftw_alloc_real], [fftw3.h])
+AST_EXT_LIB_CHECK([SNDFILE], [sndfile], [sf_open], [sndfile.h])
 
 AST_C_COMPILE_CHECK([SPANDSP], [
 		#if SPANDSP_RELEASE_DATE < 20080516
@@ -2293,6 +2366,13 @@ AST_EXT_LIB_CHECK([SS7], [ss7], [ss7_set_isup_timer], [libss7.h])
 AST_EXT_LIB_CHECK([OPENR2], [openr2], [openr2_chan_new], [openr2.h])
 
 AST_EXT_LIB_CHECK([OPUS], [opus], [opus_encoder_create], [opus/opus.h])
+# opusfile.h includes <opus_multistream.h> so we need to make sure that
+# either $OPUS_INCLUDE or /usr/include/opus is added to the search path.
+__opus_include=${OPUS_INCLUDE}
+if test -z "$__opus_include" -o x"$__opus_include" = x" " ; then
+	__opus_include=-I/usr/include/opus
+fi
+AST_EXT_LIB_CHECK([OPUSFILE], [opusfile], [op_open_callbacks], [opus/opusfile.h], [], [$__opus_include])
 
 if test "${USE_PWLIB}" != "no"; then
 	if test -n "${PWLIB_DIR}"; then
@@ -2330,6 +2410,15 @@ if test "${PBX_PWLIB}" = "1" -a "${USE_OPENH323}" != "no" ; then
 		[${PWLIB_INCLUDE}], [${PWLIB_LIB}])
 fi
 
+AST_EXT_LIB_CHECK([LUA], [lua5.3], [luaL_newstate], [lua5.3/lua.h], [-lm])
+if test "x${PBX_LUA}" = "x1" ; then
+	if test x"${LUA_DIR}" = x; then
+		LUA_INCLUDE="${LUA_INCLUDE} -I/usr/include/lua5.3"
+	else
+		LUA_INCLUDE="${LUA_INCLUDE} -I${LUA_DIR}/lua5.3"
+	fi
+fi
+
 AST_EXT_LIB_CHECK([LUA], [lua5.2], [luaL_newstate], [lua5.2/lua.h], [-lm])
 if test "x${PBX_LUA}" = "x1" ; then
 	if test x"${LUA_DIR}" = x; then
@@ -2355,14 +2444,22 @@ AST_EXT_LIB_CHECK([LUA], [lua], [luaL_openlib], [lua.h], [-lm])
 # just different header filenames and different SONAMEs
 AST_EXT_LIB_CHECK([RADIUS], [freeradius-client], [rc_read_config], [freeradius-client.h])
 if test "x${PBX_RADIUS}" = "x1"; then
-	AC_DEFINE(FREERADIUS_CLIENT, [], [Use the FreeRADIUS-client library])
+	AC_DEFINE(RADIUS_HEADER_STR, [<freeradius-client.h>], [Name of RADIUS library include header])
 else
 	AST_EXT_LIB_CHECK([RADIUS], [radiusclient-ng], [rc_read_config], [radiusclient-ng.h])
+	if test "x${PBX_RADIUS}" = "x1"; then
+		AC_DEFINE(RADIUS_HEADER_STR, [<radiusclient-ng.h>], [Name of RADIUS library include header])
+	else
+		AST_EXT_LIB_CHECK([RADIUS], [radcli], [rc_read_config], [radcli/radcli.h])
+		if test "x${PBX_RADIUS}" = "x1"; then
+			AC_DEFINE(RADIUS_HEADER_STR, [<radcli/radcli.h>], [Name of RADIUS library include header])
+		fi
+	fi
 fi
 
 AST_EXT_LIB_CHECK([CODEC2], [codec2], [codec2_create], [codec2/codec2.h])
 
-AST_EXT_LIB_CHECK([COROSYNC], [cpg], [cpg_join], [corosync/cpg.h], [-lcfg])
+AST_EXT_LIB_CHECK([COROSYNC], [cpg], [cpg_join], [corosync/cpg.h], [-lcpg -lcfg])
 AST_EXT_LIB_CHECK([COROSYNC_CFG_STATE_TRACK], [cfg], [corosync_cfg_state_track], [corosync/cfg.h], [-lcfg])
 
 AST_EXT_LIB_CHECK([SPEEX], [speex], [speex_encode], [speex/speex.h], [-lm])
@@ -2437,55 +2534,67 @@ then
         AST_C_DEFINE_CHECK([SSL_OP_NO_TLSV1_2], [SSL_OP_NO_TLSv1_2], [openssl/ssl.h])
 fi
 
-AST_EXT_LIB_CHECK([SRTP], [srtp], [srtp_init], [srtp/srtp.h])
+AST_EXT_LIB_CHECK([SRTP], [srtp2], [srtp_init], [srtp2/srtp.h], [], [], [2])
+AST_EXT_LIB_CHECK_SHARED([SRTP], [srtp2], [srtp_init], [srtp2/srtp.h], [], [], [], [
+    AC_MSG_WARN([***])
+    AC_MSG_WARN([*** libsrtp2 could not be linked as a shared object.])
+    AC_MSG_WARN([*** Try compiling libsrtp2 manually. Configure libsrtp2])
+    AC_MSG_WARN([*** with ./configure --prefix=/usr replacing /usr with])
+    AC_MSG_WARN([*** the prefix of your choice, and then make with])
+    AC_MSG_WARN([*** 'make libsrtp2.so'])
+    AC_MSG_WARN([***])
+    AC_MSG_WARN([*** After re-installing libsrtp2, re-run the Asterisk])
+    AC_MSG_WARN([*** configure script.])
+    AC_MSG_WARN([***])
+    AC_MSG_WARN([*** If you do not need SRTP support re-run configure])
+    AC_MSG_WARN([*** with the --without-srtp option.])
+    exit 1
+])
 
-if test "$PBX_SRTP" = "1";
+if test "x$PBX_SRTP" = x1;
 then
-    saved_libs="${LIBS}"
-    saved_ldflags="${LDFLAGS}"
-    saved_cflags="${CFLAGS}"
-    LIBS="${LIBS} ${SRTP_LIB}"
-    LDFLAGS="${LDFLAGS} -shared -fPIC"
-    CFLAGS="${CFLAGS} ${SRTP_INCLUDE}"
-    AC_MSG_CHECKING(for the ability of -lsrtp to be linked in a shared object)
-    AC_LINK_IFELSE(
-    [
-        AC_LANG_PROGRAM(
-            [#include <srtp/srtp.h>],
-            [srtp_init();]
-        )
-    ],
-    [ AC_MSG_RESULT(yes) ],
-    [
-        AC_MSG_RESULT(no)
-        AC_MSG_WARN(***)
-        AC_MSG_WARN(*** libsrtp could not be linked as a shared object.)
-        AC_MSG_WARN(*** Try compiling libsrtp manually. Configure libsrtp)
-        AC_MSG_WARN(*** with ./configure CFLAGS=-fPIC --prefix=/usr)
-        AC_MSG_WARN(*** replacing /usr with the prefix of your choice.)
-        AC_MSG_WARN(*** After re-installing libsrtp, re-run the Asterisk)
-        AC_MSG_WARN(*** configure script.)
-        AC_MSG_WARN(***)
-        AC_MSG_WARN(*** If you do not need SRTP support re-run configure)
-        AC_MSG_WARN(*** with the --without-srtp option.)
+    AST_EXT_LIB_CHECK([SRTP_256], [srtp2], [srtp_crypto_policy_set_aes_cm_256_hmac_sha1_80])
+    AST_EXT_LIB_CHECK([SRTP_192], [srtp2], [srtp_crypto_policy_set_aes_cm_192_hmac_sha1_80])
+    AST_EXT_LIB_CHECK([SRTP_GCM], [srtp2], [srtp_crypto_policy_set_aes_gcm_128_8_auth])
+    AST_EXT_LIB_CHECK([SRTP_SHUTDOWN], [srtp2], [srtp_shutdown], [srtp2/srtp.h])
+
+    # libsrtp2 removed support for PRNG, so we require OpenSSL
+    if test "x$PBX_OPENSSL" != x1;
+    then
+        AC_MSG_WARN([***])
+        AC_MSG_WARN([*** OpenSSL required when using libsrtp2, checking for libsrtp instead.])
+        AC_MSG_WARN([***])
+	PBX_SRTP=0
+    fi
+fi
+
+if test "x$PBX_SRTP" != x1;
+then
+    AST_EXT_LIB_CHECK([SRTP], [srtp], [srtp_init], [srtp/srtp.h], [], [], [1])
+    AST_EXT_LIB_CHECK_SHARED([SRTP], [srtp], [srtp_init], [srtp/srtp.h], [], [], [], [
+        AC_MSG_WARN([***])
+        AC_MSG_WARN([*** libsrtp could not be linked as a shared object.])
+        AC_MSG_WARN([*** Try compiling libsrtp manually. Configure libsrtp])
+        AC_MSG_WARN([*** with ./configure CFLAGS=-fPIC --prefix=/usr])
+        AC_MSG_WARN([*** replacing /usr with the prefix of your choice.])
+        AC_MSG_WARN([*** After re-installing libsrtp, re-run the Asterisk])
+        AC_MSG_WARN([*** configure script.])
+        AC_MSG_WARN([***])
+        AC_MSG_WARN([*** If you do not need SRTP support re-run configure])
+        AC_MSG_WARN([*** with the --without-srtp option.])
         exit 1
-    ]
-    )
-    LIBS="${saved_libs}"
-    LDFLAGS="${saved_ldflags}"
-    CFLAGS="${saved_cflags}"
+    ])
+
+    if test "x$PBX_SRTP" = x1;
+    then
+        AST_EXT_LIB_CHECK([SRTP_256], [srtp], [crypto_policy_set_aes_cm_256_hmac_sha1_80])
+        AST_EXT_LIB_CHECK([SRTP_192], [srtp], [crypto_policy_set_aes_cm_192_hmac_sha1_80])
+        AST_EXT_LIB_CHECK([SRTP_GCM], [srtp], [crypto_policy_set_aes_gcm_128_8_auth])
+        AST_EXT_LIB_CHECK([SRTP_SHUTDOWN], [srtp], [srtp_shutdown], [srtp/srtp.h])
+    fi
 fi
 
-if test "$PBX_SRTP" = "1";
-then
-	AST_EXT_LIB_CHECK([SRTP_256], [srtp], [crypto_policy_set_aes_cm_256_hmac_sha1_80])
-	AST_EXT_LIB_CHECK([SRTP_192], [srtp], [crypto_policy_set_aes_cm_192_hmac_sha1_80])
-	AST_EXT_LIB_CHECK([SRTP_GCM], [srtp], [aes_gcm_128_openssl])
-fi
-
-AST_EXT_LIB_CHECK([SRTP_SHUTDOWN], [srtp], [srtp_shutdown], [srtp/srtp.h])
-
-for ver in 2.0 2.2 2.4 2.6; do
+for ver in 2.0 2.2 2.4 2.6 3.0; do
 	AST_PKG_CONFIG_CHECK([GMIME], gmime-$ver)
 	if test "$PBX_GMIME" = 1; then
 		break;
@@ -2660,6 +2769,9 @@ if test -f makeopts; then
 else
 	touch makeopts.acbak
 fi
+
+# conf_bridge (binaural rendering): check if HRIRs are available
+AC_CHECK_FILES([bridges/bridge_softmix/include/hrirs.h])
 
 AC_CONFIG_FILES([build_tools/menuselect-deps makeopts])
 AST_CHECK_MANDATORY

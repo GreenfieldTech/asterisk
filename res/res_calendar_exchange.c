@@ -24,12 +24,10 @@
 	<depend>neon</depend>
 	<depend>ical</depend>
 	<depend>iksemel</depend>
-	<support_level>core</support_level>
+	<support_level>extended</support_level>
 ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <libical/ical.h>
 #include <ne_session.h>
@@ -741,7 +739,7 @@ static int unload_module(void)
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Asterisk MS Exchange Calendar Integration",
-	.support_level = AST_MODULE_SUPPORT_CORE,
+	.support_level = AST_MODULE_SUPPORT_EXTENDED,
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_DEVSTATE_PLUGIN,

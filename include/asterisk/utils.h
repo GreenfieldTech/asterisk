@@ -423,13 +423,12 @@ int ast_careful_fwrite(FILE *f, int fd, const char *s, size_t len, int timeoutms
  * Thread management support (should be moved to lock.h or a different header)
  */
 
-#define AST_STACKSIZE (((sizeof(void *) * 8 * 8) - 16) * 1024)
+#define AST_STACKSIZE     (((sizeof(void *) * 8 * 8) - 16) * 1024)
+#define AST_STACKSIZE_LOW (((sizeof(void *) * 8 * 2) - 16) * 1024)
 
-#if defined(LOW_MEMORY)
-#define AST_BACKGROUND_STACKSIZE (((sizeof(void *) * 8 * 2) - 16) * 1024)
-#else
-#define AST_BACKGROUND_STACKSIZE AST_STACKSIZE
-#endif
+int ast_background_stacksize(void);
+
+#define AST_BACKGROUND_STACKSIZE ast_background_stacksize()
 
 void ast_register_thread(char *name);
 void ast_unregister_thread(void *id);
@@ -623,7 +622,13 @@ int __ast_vasprintf(char **ret, const char *fmt, va_list ap, const char *file, i
 
 	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, -1);
 
-	if ((res = vasprintf(ret, fmt, ap)) == -1) {
+	res = vasprintf(ret, fmt, ap);
+	if (res < 0) {
+		/*
+		 * *ret is undefined so set to NULL to ensure it is
+		 * initialized to something useful.
+		 */
+		*ret = NULL;
 		MALLOC_FAILURE_MSG;
 	}
 
@@ -849,8 +854,10 @@ int ast_parse_digest(const char *digest, struct ast_http_digest *d, int request,
 #define DO_CRASH_NORETURN
 #endif
 
+void DO_CRASH_NORETURN __ast_assert_failed(int condition, const char *condition_str,
+	const char *file, int line, const char *function);
+
 #ifdef AST_DEVMODE
-void DO_CRASH_NORETURN __ast_assert_failed(int condition, const char *condition_str, const char *file, int line, const char *function);
 #define ast_assert(a) _ast_assert(a, # a, __FILE__, __LINE__, __PRETTY_FUNCTION__)
 static void force_inline _ast_assert(int condition, const char *condition_str, const char *file, int line, const char *function)
 {
@@ -1124,5 +1131,54 @@ int ast_file_is_readable(const char *filename);
  * \return >0 if version 1 > version 2.
  */
 int ast_compare_versions(const char *version1, const char *version2);
+
+/*
+ * \brief Test that an OS supports IPv6 Networking.
+ * \since 13.14.0
+ *
+ * \return True (non-zero) if the IPv6 supported.
+ * \return False (zero) if the OS doesn't support IPv6.
+ */
+int ast_check_ipv6(void);
+
+enum ast_fd_flag_operation {
+	AST_FD_FLAG_SET,
+	AST_FD_FLAG_CLEAR,
+};
+
+/*
+ * \brief Set flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to set flags on
+ * \param flags The flag(s) to set
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_set_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_SET, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+/*
+ * \brief Clear flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to clear flags on
+ * \param flags The flag(s) to clear
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_clear_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_CLEAR, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+int __ast_fd_set_flags(int fd, int flags, enum ast_fd_flag_operation op,
+	const char *file, int lineno, const char *function);
 
 #endif /* _ASTERISK_UTILS_H */

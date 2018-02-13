@@ -19,7 +19,6 @@
 /*** MODULEINFO
 	<depend>pjproject</depend>
 	<depend>res_pjsip</depend>
-	<depend>res_pjsip_session</depend>
 	<support_level>core</support_level>
  ***/
 
@@ -69,8 +68,8 @@ static enum pjsip_status_code check_content_type(const pjsip_rx_data *rdata)
 			&rdata->msg_info.msg->body->content_type, "text", "plain");
 	} else {
 		res = rdata->msg_info.ctype &&
-			!pj_strcmp2(&rdata->msg_info.ctype->media.type, "text") &&
-			!pj_strcmp2(&rdata->msg_info.ctype->media.subtype, "plain");
+			ast_sip_is_content_type(
+				&rdata->msg_info.ctype->media, "text", "plain");
 	}
 
 	return res ? PJSIP_SC_OK : PJSIP_SC_UNSUPPORTED_MEDIA_TYPE;
@@ -235,7 +234,15 @@ static void update_from(pjsip_tx_data *tdata, char *from)
 	parsed_name_addr = (pjsip_name_addr *) pjsip_parse_uri(tdata->pool, from,
 		strlen(from), PJSIP_PARSE_URI_AS_NAMEADDR);
 	if (parsed_name_addr) {
-		pjsip_sip_uri *parsed_uri = pjsip_uri_get_uri(parsed_name_addr->uri);
+		pjsip_sip_uri *parsed_uri;
+
+		if (!PJSIP_URI_SCHEME_IS_SIP(parsed_name_addr->uri)
+				&& !PJSIP_URI_SCHEME_IS_SIPS(parsed_name_addr->uri)) {
+			ast_log(LOG_WARNING, "From address '%s' is not a valid SIP/SIPS URI\n", from);
+			return;
+		}
+
+		parsed_uri = pjsip_uri_get_uri(parsed_name_addr->uri);
 
 		if (pj_strlen(&parsed_name_addr->display)) {
 			pj_strdup(tdata->pool, &name_addr->display, &parsed_name_addr->display);
@@ -504,7 +511,7 @@ static enum pjsip_status_code rx_data_to_ast_msg(pjsip_rx_data *rdata, struct as
 	buf[size] = '\0';
 	res |= ast_msg_set_from(msg, "%s", buf);
 
-	field = pj_sockaddr_print(&rdata->pkt_info.src_addr, buf, sizeof(buf) - 1, 1);
+	field = pj_sockaddr_print(&rdata->pkt_info.src_addr, buf, sizeof(buf) - 1, 3);
 	res |= ast_msg_set_var(msg, "PJSIP_RECVADDR", field);
 
 	switch (rdata->tp_info.transport->key.type) {
@@ -798,8 +805,6 @@ static pjsip_module messaging_module = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
 	if (ast_sip_register_service(&messaging_module) != PJ_SUCCESS) {
 		return AST_MODULE_LOAD_DECLINE;
 	}
@@ -842,4 +847,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Messaging Suppo
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session",
 );

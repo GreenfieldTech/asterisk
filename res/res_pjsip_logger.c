@@ -25,8 +25,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <pjsip.h>
 
 #include "asterisk/res_pjsip.h"
@@ -233,8 +231,6 @@ static const struct ast_sorcery_observer global_observer = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_MODULE_LOADED();
-
 	if (ast_sorcery_observer_add(ast_sip_get_sorcery(), "global", &global_observer)) {
 		ast_log(LOG_WARNING, "Unable to add global observer\n");
 		return AST_MODULE_LOAD_DECLINE;
@@ -264,4 +260,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Packet Logger",
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip",
 );

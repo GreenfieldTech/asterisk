@@ -27,8 +27,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/astobj2.h"
 #include "astobj2_private.h"
@@ -54,8 +52,10 @@ struct __priv_data {
 	ao2_destructor_fn destructor_fn;
 	/*! This field is used for astobj2 and ao2_weakproxy objects to reference each other */
 	void *weakptr;
+#if defined(AO2_DEBUG)
 	/*! User data size for stats */
 	size_t data_size;
+#endif
 	/*! The ao2 object option flags */
 	uint32_t options;
 	/*! magic number.  This is used to verify that a pointer passed in is a
@@ -81,8 +81,6 @@ struct ao2_weakproxy_notification {
 	void *data;
 	AST_LIST_ENTRY(ao2_weakproxy_notification) list;
 };
-
-static void weakproxy_run_callbacks(struct ao2_weakproxy *weakproxy);
 
 struct ao2_lock_priv {
 	ast_mutex_t lock;
@@ -178,22 +176,17 @@ int internal_is_ao2_object(void *user_data)
 void log_bad_ao2(void *user_data, const char *file, int line, const char *func)
 {
 	struct astobj2 *p;
+	char bad_magic[100];
 
 	if (!user_data) {
-		ast_log(__LOG_ERROR, file, line, func, "user_data is NULL\n");
+		__ast_assert_failed(0, "user_data is NULL", file, line, func);
 		return;
 	}
 
 	p = INTERNAL_OBJ(user_data);
-	if (p->priv_data.magic) {
-		ast_log(__LOG_ERROR, file, line, func,
-			"bad magic number 0x%x for object %p\n",
-			p->priv_data.magic, user_data);
-	} else {
-		ast_log(__LOG_ERROR, file, line, func,
-			"bad magic number for object %p. Object is likely destroyed.\n",
-			user_data);
-	}
+	snprintf(bad_magic, sizeof(bad_magic), "bad magic number 0x%x for object %p",
+		p->priv_data.magic, user_data);
+	__ast_assert_failed(0, bad_magic, file, line, func);
 }
 
 int __ao2_lock(void *user_data, enum ao2_lock_req lock_how, const char *file, const char *func, int line, const char *var)
@@ -205,7 +198,6 @@ int __ao2_lock(void *user_data, enum ao2_lock_req lock_how, const char *file, co
 	int res = 0;
 
 	if (obj == NULL) {
-		ast_assert(0);
 		return -1;
 	}
 
@@ -269,7 +261,6 @@ int __ao2_unlock(void *user_data, const char *file, const char *func, int line, 
 	int current_value;
 
 	if (obj == NULL) {
-		ast_assert(0);
 		return -1;
 	}
 
@@ -323,7 +314,6 @@ int __ao2_trylock(void *user_data, enum ao2_lock_req lock_how, const char *file,
 	int res = 0;
 
 	if (obj == NULL) {
-		ast_assert(0);
 		return -1;
 	}
 
@@ -454,7 +444,6 @@ void *ao2_object_get_lockaddr(void *user_data)
 	obj = INTERNAL_OBJ_CHECK(user_data);
 
 	if (obj == NULL) {
-		ast_assert(0);
 		return NULL;
 	}
 
@@ -478,7 +467,7 @@ int __ao2_ref(void *user_data, int delta,
 	struct astobj2_lockobj *obj_lockobj;
 	int current_value;
 	int ret;
-	void *weakproxy = NULL;
+	struct ao2_weakproxy *weakproxy = NULL;
 
 	if (obj == NULL) {
 		if (ref_log && user_data) {
@@ -486,7 +475,6 @@ int __ao2_ref(void *user_data, int delta,
 				user_data, delta, ast_get_tid(), file, line, func, tag ?: "");
 			fflush(ref_log);
 		}
-		ast_assert(0);
 		return -1;
 	}
 
@@ -508,6 +496,8 @@ int __ao2_ref(void *user_data, int delta,
 #endif
 
 	if (weakproxy) {
+		struct ao2_weakproxy cbs;
+
 		if (current_value == 1) {
 			/* The only remaining reference is the one owned by the weak object */
 			struct astobj2 *internal_weakproxy;
@@ -518,8 +508,9 @@ int __ao2_ref(void *user_data, int delta,
 			internal_weakproxy->priv_data.weakptr = NULL;
 			obj->priv_data.weakptr = NULL;
 
-			/* Notify the subscribers that weakproxy now points to NULL. */
-			weakproxy_run_callbacks(weakproxy);
+			/* transfer list to local copy so callbacks are run with weakproxy unlocked. */
+			cbs.destroyed_cb = weakproxy->destroyed_cb;
+			AST_LIST_HEAD_INIT_NOLOCK(&weakproxy->destroyed_cb);
 
 			/* weak is already unlinked from obj so this won't recurse */
 			ao2_ref(user_data, -1);
@@ -528,12 +519,34 @@ int __ao2_ref(void *user_data, int delta,
 		ao2_unlock(weakproxy);
 
 		if (current_value == 1) {
+			struct ao2_weakproxy_notification *destroyed_cb;
+
+			/* Notify the subscribers that weakproxy now points to NULL. */
+			while ((destroyed_cb = AST_LIST_REMOVE_HEAD(&cbs.destroyed_cb, list))) {
+				destroyed_cb->cb(weakproxy, destroyed_cb->data);
+				ast_free(destroyed_cb);
+			}
+
 			ao2_ref(weakproxy, -1);
 		}
 	}
 
 	if (0 < current_value) {
 		/* The object still lives. */
+#define EXCESSIVE_REF_COUNT		100000
+
+		if (EXCESSIVE_REF_COUNT <= current_value && ret < EXCESSIVE_REF_COUNT) {
+			char excessive_ref_buf[100];
+
+			/* We just reached or went over the excessive ref count trigger */
+			snprintf(excessive_ref_buf, sizeof(excessive_ref_buf),
+				"Excessive refcount %d reached on ao2 object %p",
+				current_value, user_data);
+			ast_log(__LOG_ERROR, file, line, func, "%s\n", excessive_ref_buf);
+
+			__ast_assert_failed(0, excessive_ref_buf, file, line, func);
+		}
+
 		if (ref_log && tag) {
 			fprintf(ref_log, "%p,%s%d,%d,%s,%d,%s,%d,%s\n", user_data,
 				(delta < 0 ? "" : "+"), delta, ast_get_tid(),
@@ -681,11 +694,11 @@ static void *internal_ao2_alloc(size_t data_size, ao2_destructor_fn destructor_f
 	/* Initialize common ao2 values. */
 	obj->priv_data.ref_counter = 1;
 	obj->priv_data.destructor_fn = destructor_fn;	/* can be NULL */
-	obj->priv_data.data_size = data_size;
 	obj->priv_data.options = options;
 	obj->priv_data.magic = AO2_MAGIC;
 
 #ifdef AO2_DEBUG
+	obj->priv_data.data_size = data_size;
 	ast_atomic_fetchadd_int(&ao2.total_objects, 1);
 	ast_atomic_fetchadd_int(&ao2.total_mem, data_size);
 	ast_atomic_fetchadd_int(&ao2.total_refs, 1);
@@ -723,30 +736,6 @@ unsigned int ao2_options_get(void *obj)
 		return 0;
 	}
 	return orig_obj->priv_data.options;
-}
-
-
-void __ao2_global_obj_release(struct ao2_global_obj *holder, const char *tag, const char *file, int line, const char *func, const char *name)
-{
-	if (!holder) {
-		/* For sanity */
-		ast_log(LOG_ERROR, "Must be called with a global object!\n");
-		ast_assert(0);
-		return;
-	}
-	if (__ast_rwlock_wrlock(file, line, func, &holder->lock, name)) {
-		/* Could not get the write lock. */
-		ast_assert(0);
-		return;
-	}
-
-	/* Release the held ao2 object. */
-	if (holder->obj) {
-		__ao2_ref(holder->obj, -1, tag, file, line, func);
-		holder->obj = NULL;
-	}
-
-	__ast_rwlock_unlock(file, line, func, &holder->lock, name);
 }
 
 void *__ao2_global_obj_replace(struct ao2_global_obj *holder, void *obj, const char *tag, const char *file, int line, const char *func, const char *name)
@@ -816,16 +805,6 @@ void *__ao2_global_obj_ref(struct ao2_global_obj *holder, const char *tag, const
 }
 
 
-static void weakproxy_run_callbacks(struct ao2_weakproxy *weakproxy)
-{
-	struct ao2_weakproxy_notification *destroyed_cb;
-
-	while ((destroyed_cb = AST_LIST_REMOVE_HEAD(&weakproxy->destroyed_cb, list))) {
-		destroyed_cb->cb(weakproxy, destroyed_cb->data);
-		ast_free(destroyed_cb);
-	}
-}
-
 void *__ao2_weakproxy_alloc(size_t data_size, ao2_destructor_fn destructor_fn,
 	const char *tag, const char *file, int line, const char *func)
 {
@@ -887,7 +866,7 @@ int __ao2_weakproxy_set_object(void *weakproxy, void *obj, int flags,
 		ao2_unlock(weakproxy);
 		/* It is possible for obj to be accessed now.  It's allowed
 		 * for weakproxy to already be in a container.  Another thread
-		 * could have been waiting for a lock on weakproxy to retreive
+		 * could have been waiting for a lock on weakproxy to retrieve
 		 * the object.
 		 */
 	}
@@ -971,6 +950,7 @@ int ao2_weakproxy_subscribe(void *weakproxy, ao2_weakproxy_notification_cb cb, v
 {
 	struct astobj2 *weakproxy_internal = INTERNAL_OBJ_CHECK(weakproxy);
 	int ret = -1;
+	int hasobj;
 
 	if (!weakproxy_internal || weakproxy_internal->priv_data.magic != AO2_WEAK) {
 		return -1;
@@ -980,7 +960,8 @@ int ao2_weakproxy_subscribe(void *weakproxy, ao2_weakproxy_notification_cb cb, v
 		ao2_lock(weakproxy);
 	}
 
-	if (weakproxy_internal->priv_data.weakptr) {
+	hasobj = weakproxy_internal->priv_data.weakptr != NULL;
+	if (hasobj) {
 		struct ao2_weakproxy *weak = weakproxy;
 		struct ao2_weakproxy_notification *sub = ast_calloc(1, sizeof(*sub));
 
@@ -990,13 +971,15 @@ int ao2_weakproxy_subscribe(void *weakproxy, ao2_weakproxy_notification_cb cb, v
 			AST_LIST_INSERT_HEAD(&weak->destroyed_cb, sub, list);
 			ret = 0;
 		}
-	} else {
-		cb(weakproxy, data);
-		ret = 0;
 	}
 
 	if (!(flags & OBJ_NOLOCK)) {
 		ao2_unlock(weakproxy);
+	}
+
+	if (!hasobj) {
+		cb(weakproxy, data);
+		ret = 0;
 	}
 
 	return ret;

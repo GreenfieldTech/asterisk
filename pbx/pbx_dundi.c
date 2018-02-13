@@ -32,13 +32,11 @@
 
 /*** MODULEINFO
 	<depend>zlib</depend>
-	<use type="external">crypto</use>
+	<use type="module">res_crypto</use>
 	<support_level>extended</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/network.h"
 #include <sys/ioctl.h>
@@ -99,8 +97,8 @@ ASTERISK_REGISTER_FILE()
 			in the DUNDi lookup. If no results were found, the result will be blank.</para>
 		</description>
 	</function>
-			
-		
+
+
 	<function name="DUNDIQUERY" language="en_US">
 		<synopsis>
 			Initiate a DUNDi query.
@@ -562,7 +560,7 @@ static int get_mapping_weight(struct dundi_mapping *map, struct varshead *headp)
 	if (map->weightstr) {
 		if (headp) {
 			pbx_substitute_variables_varshead(headp, map->weightstr, buf, sizeof(buf) - 1);
-		} else {                
+		} else {
 			pbx_substitute_variables_helper(NULL, map->weightstr, buf, sizeof(buf) - 1);
 		}
 
@@ -994,9 +992,9 @@ static int dundi_prop_precache(struct dundi_transaction *trans, struct dundi_ies
 					sizeof(trans->parent->dr[trans->parent->respcount].tech));
 				trans->parent->respcount++;
 				ast_clear_flag_nonstd(trans->parent->hmd, DUNDI_HINT_DONT_ASK);
-			} else if (trans->parent->dr[z].weight > ies->answers[x]->weight) {
+			} else if (trans->parent->dr[z].weight > ntohs(ies->answers[x]->weight)) {
 				/* Update weight if appropriate */
-				trans->parent->dr[z].weight = ies->answers[x]->weight;
+				trans->parent->dr[z].weight = ntohs(ies->answers[x]->weight);
 			}
 		} else
 			ast_log(LOG_NOTICE, "Dropping excessive answers in precache for %s@%s\n",
@@ -1764,9 +1762,9 @@ static int handle_command_response(struct dundi_transaction *trans, struct dundi
 									sizeof(trans->parent->dr[trans->parent->respcount].tech));
 								trans->parent->respcount++;
 								ast_clear_flag_nonstd(trans->parent->hmd, DUNDI_HINT_DONT_ASK);
-							} else if (trans->parent->dr[z].weight > ies.answers[x]->weight) {
+							} else if (trans->parent->dr[z].weight > ntohs(ies.answers[x]->weight)) {
 								/* Update weight if appropriate */
-								trans->parent->dr[z].weight = ies.answers[x]->weight;
+								trans->parent->dr[z].weight = ntohs(ies.answers[x]->weight);
 							}
 						} else
 							ast_log(LOG_NOTICE, "Dropping excessive answers to request for %s@%s\n",
@@ -5065,6 +5063,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Distributed Universal Nu
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload,
-	.nonoptreq = "res_crypto",
+	.optional_modules = "res_crypto",
 );
-

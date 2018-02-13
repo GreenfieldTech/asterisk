@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/paths.h"	/* use ast_config_AST_CONFIG_DIR */
 #include "asterisk/network.h"	/* we do some sockaddr manipulation here */
 
@@ -988,13 +986,15 @@ struct ast_category *ast_category_new_template(const char *name, const char *in_
 }
 
 static struct ast_category *category_get_sep(const struct ast_config *config,
-	const char *category_name, const char *filter, char sep)
+	const char *category_name, const char *filter, char sep, char pointer_match_possible)
 {
 	struct ast_category *cat;
 
-	for (cat = config->root; cat; cat = cat->next) {
-		if (cat->name == category_name && does_category_match(cat, category_name, filter, sep)) {
-			return cat;
+	if (pointer_match_possible) {
+		for (cat = config->root; cat; cat = cat->next) {
+			if (cat->name == category_name && does_category_match(cat, category_name, filter, sep)) {
+				return cat;
+			}
 		}
 	}
 
@@ -1010,7 +1010,7 @@ static struct ast_category *category_get_sep(const struct ast_config *config,
 struct ast_category *ast_category_get(const struct ast_config *config,
 	const char *category_name, const char *filter)
 {
-	return category_get_sep(config, category_name, filter, ',');
+	return category_get_sep(config, category_name, filter, ',', 1);
 }
 
 const char *ast_category_get_name(const struct ast_category *category)
@@ -1794,7 +1794,7 @@ static int process_text_line(struct ast_config *cfg, struct ast_category **cat,
 					if (cur[1] != ',') {
 						filter = &cur[1];
 					}
-					*cat = category_get_sep(cfg, catname, filter, '&');
+					*cat = category_get_sep(cfg, catname, filter, '&', 0);
 					if (!(*cat)) {
 						if (newcat) {
 							ast_category_destroy(newcat);
@@ -1812,7 +1812,7 @@ static int process_text_line(struct ast_config *cfg, struct ast_category **cat,
 				} else {
 					struct ast_category *base;
 
-					base = ast_category_get(cfg, cur, "TEMPLATES=include");
+					base = category_get_sep(cfg, cur, "TEMPLATES=include", ',', 0);
 					if (!base) {
 						if (newcat) {
 							ast_category_destroy(newcat);
@@ -2191,7 +2191,6 @@ static struct ast_config *config_text_file_load(const char *database, const char
 				/* If we get to this point, then we're loading regardless */
 				ast_clear_flag(&flags, CONFIG_FLAG_FILEUNCHANGED);
 				ast_debug(1, "Parsing %s\n", fn);
-				ast_verb(2, "Parsing '%s': Found\n", fn);
 				while (!feof(f)) {
 					lineno++;
 					if (fgets(buf, sizeof(buf), f)) {
@@ -3739,6 +3738,55 @@ uint32_done:
 			*result  = error ? def : x;
 		}
 		ast_debug(3, "extract uint from [%s] in [%u, %u] gives [%lu](%d)\n",
+				arg, low, high, result ? *result : x, error);
+		break;
+	}
+
+	case PARSE_TIMELEN:
+	{
+		int x = 0;
+		int *result = p_result;
+		int def = result ? *result : 0;
+		int high = INT_MAX;
+		int low = INT_MIN;
+		enum ast_timelen defunit;
+
+		defunit = va_arg(ap, enum ast_timelen);
+		/* optional arguments: default value and/or (low, high) */
+		if (flags & PARSE_DEFAULT) {
+			def = va_arg(ap, int);
+		}
+		if (flags & (PARSE_IN_RANGE | PARSE_OUT_RANGE)) {
+			low = va_arg(ap, int);
+			high = va_arg(ap, int);
+		}
+		if (ast_strlen_zero(arg)) {
+			error = 1;
+			goto timelen_done;
+		}
+		error = ast_app_parse_timelen(arg, &x, defunit);
+		if (error || x < INT_MIN || x > INT_MAX) {
+			/* Parse error, or type out of int bounds */
+			error = 1;
+			goto timelen_done;
+		}
+		error = (x < low) || (x > high);
+		if (flags & PARSE_RANGE_DEFAULTS) {
+			if (x < low) {
+				def = low;
+			} else if (x > high) {
+				def = high;
+			}
+		}
+		if (flags & PARSE_OUT_RANGE) {
+			error = !error;
+		}
+timelen_done:
+		if (result) {
+			*result  = error ? def : x;
+		}
+
+		ast_debug(3, "extract timelen from [%s] in [%d, %d] gives [%d](%d)\n",
 				arg, low, high, result ? *result : x, error);
 		break;
 	}

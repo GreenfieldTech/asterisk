@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
@@ -338,6 +336,15 @@ static void print_frame(struct ast_frame *frame)
 			/* Should never happen. */
 			ast_assert(0);
 			break;
+		case AST_CONTROL_STREAM_TOPOLOGY_REQUEST_CHANGE:
+			ast_verbose("SubClass: STREAM_TOPOLOGY_REQUEST_CHANGE\n");
+			break;
+		case AST_CONTROL_STREAM_TOPOLOGY_CHANGED:
+			ast_verbose("SubClass: STREAM_TOPOLOGY_CHANGED\n");
+			break;
+		case AST_CONTROL_STREAM_TOPOLOGY_SOURCE_CHANGED:
+			ast_verbose("SubClass: STREAM_TOPOLOGY_SOURCE_CHANGED\n");
+			break;
 		case AST_CONTROL_STREAM_STOP:
 			ast_verbose("SubClass: STREAM_STOP\n");
 			break;
@@ -371,6 +378,9 @@ static void print_frame(struct ast_frame *frame)
 			ast_verbose("SubClass: %d\n", frame->subclass.integer);
 		}
 		ast_verbose("Bytes: %d\n", frame->datalen);
+		break;
+	case AST_FRAME_RTCP:
+		ast_verbose("FrameType: RTCP\n");
 		break;
 	case AST_FRAME_NULL:
 		ast_verbose("FrameType: NULL\n");
@@ -429,5 +439,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "Frame Trace for internal ast_frame debugging.");
-
-

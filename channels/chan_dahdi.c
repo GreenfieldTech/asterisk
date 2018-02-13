@@ -54,10 +54,10 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #if defined(__NetBSD__) || defined(__FreeBSD__)
 #include <pthread.h>
+#else
+#include <sys/sysmacros.h>
 #endif
 #include <signal.h>
 #include <sys/stat.h>
@@ -121,7 +121,6 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/devicestate.h"
 #include "asterisk/paths.h"
 #include "asterisk/ccss.h"
-#include "asterisk/data.h"
 #include "asterisk/features_config.h"
 #include "asterisk/bridge.h"
 #include "asterisk/stasis_channels.h"
@@ -792,78 +791,6 @@ const char * const subnames[] = {
 	"Callwait",
 	"Threeway"
 };
-
-#define DATA_EXPORT_DAHDI_PVT(MEMBER)					\
-	MEMBER(dahdi_pvt, cid_rxgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, rxgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, txgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, txdrc, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, rxdrc, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, adsi, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, answeronpolarityswitch, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, busydetect, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, callreturn, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, callwaiting, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, callwaitingcallerid, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, cancallforward, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, canpark, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, confirmanswer, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, destroy, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, didtdd, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dialednone, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dialing, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, digital, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dnd, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, echobreak, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, echocanbridged, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, echocanon, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, faxhandled, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, usefaxbuffers, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, bufferoverrideinuse, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, firstradio, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, hanguponpolarityswitch, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, hardwaredtmf, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, hidecallerid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, hidecalleridname, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, ignoredtmf, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, immediate, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, inalarm, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mate, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, outgoing, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, permcallwaiting, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, priindication_oob, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, priexclusive, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, pulse, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, pulsedial, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, restartpending, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, restrictcid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, threewaycalling, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, transfer, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, use_callerid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, use_callingpres, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, usedistinctiveringdetection, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, dahditrcallerid, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, transfertobusy, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_neon, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_fsk, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_rpas, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitoractive, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwisendactive, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, inservice, AST_DATA_BOOLEAN)				\
-	MEMBER(dahdi_pvt, locallyblocked, AST_DATA_UNSIGNED_INTEGER)		\
-	MEMBER(dahdi_pvt, remotelyblocked, AST_DATA_UNSIGNED_INTEGER)		\
-	MEMBER(dahdi_pvt, manages_span_alarms, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, use_smdi, AST_DATA_BOOLEAN)				\
-	MEMBER(dahdi_pvt, context, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, defcontext, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, description, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, exten, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, language, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, mohinterpret, AST_DATA_STRING)			\
-	MEMBER(dahdi_pvt, mohsuggest, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, parkinglot, AST_DATA_STRING)
-
-AST_DATA_STRUCTURE(dahdi_pvt, DATA_EXPORT_DAHDI_PVT);
 
 static struct dahdi_pvt *iflist = NULL;	/*!< Main interface list start */
 static struct dahdi_pvt *ifend = NULL;	/*!< Main interface list end */
@@ -8073,7 +8000,7 @@ static struct ast_frame *dahdi_handle_event(struct ast_channel *ast)
 						p->subs[otherindex].needunhold = 1;
 						p->owner = p->subs[SUB_REAL].owner;
 					} else {
-						ast_verb(3, "Dumping incomplete call on on %s\n", ast_channel_name(p->subs[SUB_THREEWAY].owner));
+						ast_verb(3, "Dumping incomplete call on %s\n", ast_channel_name(p->subs[SUB_THREEWAY].owner));
 						swap_subs(p, SUB_THREEWAY, SUB_REAL);
 						ast_channel_softhangup_internal_flag_add(p->subs[SUB_THREEWAY].owner, AST_SOFTHANGUP_DEV);
 						p->owner = p->subs[SUB_REAL].owner;
@@ -11979,38 +11906,6 @@ static int sigtype_to_signalling(int sigtype)
 
 /*!
  * \internal
- * \brief Get file name and channel number from (subdir,number)
- *
- * \param subdir name of the subdirectory under /dev/dahdi/
- * \param channel name of device file under /dev/dahdi/<subdir>/
- * \param path buffer to put file name in
- * \param pathlen maximal length of path
- *
- * \retval minor number of dahdi channel.
- * \retval -errno on error.
- */
-static int device2chan(const char *subdir, int channel, char *path, int pathlen)
-{
-	struct stat	stbuf;
-	int		num;
-
-	snprintf(path, pathlen, "/dev/dahdi/%s/%d", subdir, channel);
-	if (stat(path, &stbuf) < 0) {
-		ast_log(LOG_ERROR, "stat(%s) failed: %s\n", path, strerror(errno));
-		return -errno;
-	}
-	if (!S_ISCHR(stbuf.st_mode)) {
-		ast_log(LOG_ERROR, "%s: Not a character device file\n", path);
-		return -EINVAL;
-	}
-	num = minor(stbuf.st_rdev);
-	ast_debug(1, "%s -> %d\n", path, num);
-	return num;
-
-}
-
-/*!
- * \internal
  * \brief Initialize/create a channel interface.
  *
  * \param channel Channel interface number to initialize/create.
@@ -14317,7 +14212,7 @@ static char *handle_pri_service_generic(struct ast_cli_entry *e, int cmd, struct
 	int trunkgroup;
 	int x, y, fd = a->fd;
 	int interfaceid = 0;
-	char db_chan_name[20], db_answer[5];
+	char db_chan_name[20], db_answer[15];
 	struct dahdi_pvt *tmp;
 	struct dahdi_pri *pri;
 
@@ -17347,7 +17242,6 @@ static int __unload_module(void)
 	ast_manager_unregister("PRIDebugFileSet");
 	ast_manager_unregister("PRIDebugFileUnset");
 #endif	/* defined(HAVE_PRI) */
-	ast_data_unregister(NULL);
 	ast_channel_unregister(&dahdi_tech);
 
 	/* Hangup all interfaces if they have an owner */
@@ -17426,33 +17320,9 @@ static int unload_module(void)
 	return __unload_module();
 }
 
-static void string_replace(char *str, int char1, int char2)
-{
-	for (; *str; str++) {
-		if (*str == char1) {
-			*str = char2;
-		}
-	}
-}
-
-static char *parse_spanchan(char *chanstr, char **subdir)
-{
-	char *p;
-
-	if ((p = strrchr(chanstr, '!')) == NULL) {
-		*subdir = NULL;
-		return chanstr;
-	}
-	*p++ = '\0';
-	string_replace(chanstr, '!', '/');
-	*subdir = chanstr;
-	return p;
-}
-
 static int build_channels(struct dahdi_chan_conf *conf, const char *value, int reload, int lineno)
 {
 	char *c, *chan;
-	char *subdir;
 	int x, start, finish;
 	struct dahdi_pvt *tmp;
 
@@ -17462,7 +17332,6 @@ static int build_channels(struct dahdi_chan_conf *conf, const char *value, int r
 	}
 
 	c = ast_strdupa(value);
-	c = parse_spanchan(c, &subdir);
 
 	while ((chan = strsep(&c, ","))) {
 		if (sscanf(chan, "%30d-%30d", &start, &finish) == 2) {
@@ -17484,39 +17353,22 @@ static int build_channels(struct dahdi_chan_conf *conf, const char *value, int r
 		}
 
 		for (x = start; x <= finish; x++) {
-			char fn[PATH_MAX];
-			int real_channel = x;
-
-			if (!ast_strlen_zero(subdir)) {
-				real_channel = device2chan(subdir, x, fn, sizeof(fn));
-				if (real_channel < 0) {
-					if (conf->ignore_failed_channels) {
-						ast_log(LOG_WARNING, "Failed configuring %s!%d, (got %d). But moving on to others.\n",
-								subdir, x, real_channel);
-						continue;
-					} else {
-						ast_log(LOG_ERROR, "Failed configuring %s!%d, (got %d).\n",
-								subdir, x, real_channel);
-						return -1;
-					}
-				}
-			}
 			if (conf->wanted_channels_start &&
-				(real_channel < conf->wanted_channels_start ||
-				 real_channel > conf->wanted_channels_end)
+				(x < conf->wanted_channels_start ||
+				 x > conf->wanted_channels_end)
 			   ) {
 				continue;
 			}
-			tmp = mkintf(real_channel, conf, reload);
+			tmp = mkintf(x, conf, reload);
 
 			if (tmp) {
-				ast_verb(3, "%s channel %d, %s signalling\n", reload ? "Reconfigured" : "Registered", real_channel, sig2str(tmp->sig));
+				ast_verb(3, "%s channel %d, %s signalling\n", reload ? "Reconfigured" : "Registered", x, sig2str(tmp->sig));
 			} else {
 				ast_log(LOG_ERROR, "Unable to %s channel '%s'\n",
 						(reload == 1) ? "reconfigure" : "register", value);
 				return -1;
 			}
-			if (real_channel == CHAN_PSEUDO) {
+			if (x == CHAN_PSEUDO) {
 				has_pseudo = 1;
 			}
 		}
@@ -18902,8 +18754,8 @@ static int process_dahdi(struct dahdi_chan_conf *confp, const char *cat, struct 
 				}
 
 				/* This check is only needed to satisfy the compiler that element_count can't cause an out of bounds */
-				if (element_count >= ARRAY_LEN(c)) {
-					element_count = ARRAY_LEN(c) - 1;
+				if (element_count > ARRAY_LEN(c)) {
+					element_count = ARRAY_LEN(c);
 				}
 
 				/* Ring cadences cannot be negative */
@@ -19432,163 +19284,6 @@ static int setup_dahdi(int reload)
 }
 
 /*!
- * \internal
- * \brief Callback used to generate the dahdi status tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_status_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	int ctl, res, span;
-	struct ast_data *data_span, *data_alarms;
-	struct dahdi_spaninfo s;
-
-	ctl = open("/dev/dahdi/ctl", O_RDWR);
-	if (ctl < 0) {
-		ast_log(LOG_ERROR, "No DAHDI found. Unable to open /dev/dahdi/ctl: %s\n", strerror(errno));
-		return -1;
-	}
-	for (span = 1; span < DAHDI_MAX_SPANS; ++span) {
-		s.spanno = span;
-		res = ioctl(ctl, DAHDI_SPANSTAT, &s);
-		if (res) {
-			continue;
-		}
-
-		data_span = ast_data_add_node(data_root, "span");
-		if (!data_span) {
-			continue;
-		}
-		ast_data_add_str(data_span, "description", s.desc);
-
-		/* insert the alarms status */
-		data_alarms = ast_data_add_node(data_span, "alarms");
-		if (!data_alarms) {
-			continue;
-		}
-
-		ast_data_add_bool(data_alarms, "BLUE", s.alarms & DAHDI_ALARM_BLUE);
-		ast_data_add_bool(data_alarms, "YELLOW", s.alarms & DAHDI_ALARM_YELLOW);
-		ast_data_add_bool(data_alarms, "RED", s.alarms & DAHDI_ALARM_RED);
-		ast_data_add_bool(data_alarms, "LOOPBACK", s.alarms & DAHDI_ALARM_LOOPBACK);
-		ast_data_add_bool(data_alarms, "RECOVER", s.alarms & DAHDI_ALARM_RECOVER);
-		ast_data_add_bool(data_alarms, "NOTOPEN", s.alarms & DAHDI_ALARM_NOTOPEN);
-
-		ast_data_add_int(data_span, "irqmisses", s.irqmisses);
-		ast_data_add_int(data_span, "bpviol", s.bpvcount);
-		ast_data_add_int(data_span, "crc4", s.crc4count);
-		ast_data_add_str(data_span, "framing",	s.lineconfig & DAHDI_CONFIG_D4 ? "D4" :
-							s.lineconfig & DAHDI_CONFIG_ESF ? "ESF" :
-							s.lineconfig & DAHDI_CONFIG_CCS ? "CCS" :
-							"CAS");
-		ast_data_add_str(data_span, "coding",	s.lineconfig & DAHDI_CONFIG_B8ZS ? "B8ZS" :
-							s.lineconfig & DAHDI_CONFIG_HDB3 ? "HDB3" :
-							s.lineconfig & DAHDI_CONFIG_AMI ? "AMI" :
-							"Unknown");
-		ast_data_add_str(data_span, "options",	s.lineconfig & DAHDI_CONFIG_CRC4 ?
-							s.lineconfig & DAHDI_CONFIG_NOTOPEN ? "CRC4/YEL" : "CRC4" :
-							s.lineconfig & DAHDI_CONFIG_NOTOPEN ? "YEL" : "");
-		ast_data_add_str(data_span, "lbo", lbostr[s.lbo]);
-
-		/* if this span doesn't match remove it. */
-		if (!ast_data_search_match(search, data_span)) {
-			ast_data_remove_node(data_root, data_span);
-		}
-	}
-	close(ctl);
-
-	return 0;
-}
-
-/*!
- * \internal
- * \brief Callback used to generate the dahdi channels tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_channels_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	struct dahdi_pvt *tmp;
-	struct ast_data *data_channel;
-
-	ast_mutex_lock(&iflock);
-	for (tmp = iflist; tmp; tmp = tmp->next) {
-		data_channel = ast_data_add_node(data_root, "channel");
-		if (!data_channel) {
-			continue;
-		}
-
-		ast_data_add_structure(dahdi_pvt, data_channel, tmp);
-
-		/* if this channel doesn't match remove it. */
-		if (!ast_data_search_match(search, data_channel)) {
-			ast_data_remove_node(data_root, data_channel);
-		}
-	}
-	ast_mutex_unlock(&iflock);
-
-	return 0;
-}
-
-/*!
- * \internal
- * \brief Callback used to generate the dahdi channels tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_version_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	int pseudo_fd = -1;
-	struct dahdi_versioninfo vi = {
-		.version = "Unknown",
-		.echo_canceller = "Unknown"
-	};
-
-	if ((pseudo_fd = open("/dev/dahdi/ctl", O_RDONLY)) < 0) {
-		ast_log(LOG_ERROR, "Failed to open control file to get version.\n");
-		return -1;
-	}
-
-	if (ioctl(pseudo_fd, DAHDI_GETVERSION, &vi)) {
-		ast_log(LOG_ERROR, "Failed to get DAHDI version: %s\n", strerror(errno));
-	}
-
-	close(pseudo_fd);
-
-	ast_data_add_str(data_root, "value", vi.version);
-	ast_data_add_str(data_root, "echocanceller", vi.echo_canceller);
-
-	return 0;
-}
-
-static const struct ast_data_handler dahdi_status_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_status_data_provider_get
-};
-
-static const struct ast_data_handler dahdi_channels_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_channels_data_provider_get
-};
-
-static const struct ast_data_handler dahdi_version_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_version_data_provider_get
-};
-
-static const struct ast_data_entry dahdi_data_providers[] = {
-	AST_DATA_ENTRY("asterisk/channel/dahdi/status", &dahdi_status_data_provider),
-	AST_DATA_ENTRY("asterisk/channel/dahdi/channels", &dahdi_channels_data_provider),
-	AST_DATA_ENTRY("asterisk/channel/dahdi/version", &dahdi_version_data_provider)
-};
-
-/*!
  * \brief Load the module
  *
  * Module loading including tests for configuration or dependencies.
@@ -19606,11 +19301,11 @@ static int load_module(void)
 #endif	/* defined(HAVE_PRI) || defined(HAVE_SS7) */
 
 	if (STASIS_MESSAGE_TYPE_INIT(dahdichannel_type)) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(dahdi_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append(dahdi_tech.capabilities, ast_format_slin, 0);
 	ast_format_cap_append(dahdi_tech.capabilities, ast_format_ulaw, 0);
@@ -19618,7 +19313,7 @@ static int load_module(void)
 
 	if (dahdi_native_load(&dahdi_tech)) {
 		ao2_ref(dahdi_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 #ifdef HAVE_PRI
@@ -19636,7 +19331,7 @@ static int load_module(void)
 	if (ast_cc_agent_register(&dahdi_pri_cc_agent_callbacks)
 		|| ast_cc_monitor_register(&dahdi_pri_cc_monitor_callbacks)) {
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #endif	/* defined(HAVE_PRI_CCSS) */
 	if (sig_pri_load(
@@ -19647,7 +19342,7 @@ static int load_module(void)
 #endif	/* defined(HAVE_PRI_CCSS) */
 		)) {
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #endif
 #if defined(HAVE_SS7)
@@ -19670,7 +19365,7 @@ static int load_module(void)
 	if (ast_channel_register(&dahdi_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel class 'DAHDI'\n");
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #ifdef HAVE_PRI
 	ast_cli_register_multiple(dahdi_pri_cli, ARRAY_LEN(dahdi_pri_cli));
@@ -19684,8 +19379,6 @@ static int load_module(void)
 #endif
 
 	ast_cli_register_multiple(dahdi_cli, ARRAY_LEN(dahdi_cli));
-	/* register all the data providers */
-	ast_data_register_multiple(dahdi_data_providers, ARRAY_LEN(dahdi_data_providers));
 	memset(round_robin, 0, sizeof(round_robin));
 	ast_manager_register_xml("DAHDITransfer", 0, action_transfer);
 	ast_manager_register_xml("DAHDIHangup", 0, action_transferhangup);
@@ -19849,5 +19542,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, tdesc,
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
-	.nonoptreq = "res_smdi",
+	.optional_modules = "res_smdi",
 );

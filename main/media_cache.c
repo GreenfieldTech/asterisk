@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/stat.h>
 #include "asterisk/config.h"
 #include "asterisk/bucket.h"
@@ -50,62 +48,6 @@ ASTERISK_REGISTER_FILE()
 
 /*! Our one and only container holding media items */
 static struct ao2_container *media_cache;
-
-/*!
- * \internal
- * \brief Hashing function for file metadata
- */
-static int media_cache_hash(const void *obj, const int flags)
-{
-	const struct ast_bucket_file *object;
-	const char *key;
-
-	switch (flags & OBJ_SEARCH_MASK) {
-	case OBJ_SEARCH_KEY:
-		key = obj;
-		break;
-	case OBJ_SEARCH_OBJECT:
-		object = obj;
-		key = ast_sorcery_object_get_id(object);
-		break;
-	default:
-		/* Hash can only work on something with a full key */
-		ast_assert(0);
-		return 0;
-	}
-	return ast_str_hash(key);
-}
-
-/*!
- * \internal
- * \brief Comparison function for file metadata
- */
-static int media_cache_cmp(void *obj, void *arg, int flags)
-{
-	struct ast_bucket_file *left = obj;
-	struct ast_bucket_file *right = arg;
-	const char *right_key = arg;
-	int cmp;
-
-	switch (flags & OBJ_SEARCH_MASK) {
-	case OBJ_SEARCH_OBJECT:
-		right_key = ast_sorcery_object_get_id(right);
-		/* Fall through */
-	case OBJ_SEARCH_KEY:
-		cmp = strcmp(ast_sorcery_object_get_id(left), right_key);
-		break;
-	case OBJ_SEARCH_PARTIAL_KEY:
-		cmp = strncmp(ast_sorcery_object_get_id(left), right_key, strlen(right_key));
-		break;
-	default:
-		ast_assert(0);
-		cmp = 0;
-		break;
-	}
-
-	return cmp ? 0 : CMP_MATCH | CMP_STOP;
-}
-
 
 int ast_media_cache_exists(const char *uri)
 {
@@ -226,7 +168,8 @@ int ast_media_cache_retrieve(const char *uri, const char *preferred_file_name,
 	 */
 	bucket_file = ao2_find(media_cache, uri, OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (bucket_file) {
-		if (!ast_bucket_file_is_stale(bucket_file)) {
+		if (!ast_bucket_file_is_stale(bucket_file)
+			&& ast_file_is_readable(bucket_file->path)) {
 			ast_copy_string(file_path, bucket_file->path, len);
 			if ((ext = strrchr(file_path, '.'))) {
 				*ext = '\0';
@@ -713,7 +656,7 @@ int ast_media_cache_init(void)
 	ast_register_atexit(media_cache_shutdown);
 
 	media_cache = ao2_container_alloc_options(AO2_ALLOC_OPT_LOCK_MUTEX, AO2_BUCKETS,
-		media_cache_hash, media_cache_cmp);
+		ast_sorcery_object_id_hash, ast_sorcery_object_id_compare);
 	if (!media_cache) {
 		return -1;
 	}

@@ -30,18 +30,21 @@
 #include "asterisk/bridge_features.h"
 #include "conf_state.h"
 
-/* Maximum length of a conference bridge name */
+/*! Maximum length of a conference bridge name */
 #define MAX_CONF_NAME AST_MAX_EXTENSION
-/* Maximum length of a conference pin */
+/*! Maximum length of a conference pin */
 #define MAX_PIN     80
-/* Maximum length of bridge/user/menu profile names */
+/*! Maximum length of bridge/user/menu profile names */
 #define MAX_PROFILE_NAME 128
 
 #define DEFAULT_USER_PROFILE "default_user"
 #define DEFAULT_BRIDGE_PROFILE "default_bridge"
 #define DEFAULT_MENU_PROFILE "default_menu"
 
+/*! Default minimum average magnitude threshold to determine talking by the DSP. */
 #define DEFAULT_TALKING_THRESHOLD 160
+
+/*! Default time in ms of silence necessary to declare talking stopped by the bridge. */
 #define DEFAULT_SILENCE_THRESHOLD 2500
 
 enum user_profile_flags {
@@ -70,7 +73,9 @@ enum bridge_profile_flags {
 	BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED = (1 << 2), /*!< Set if conference should feed video of first marked user to all participants. */
 	BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER = (1 << 3), /*!< Set if conference set the video feed to follow the loudest talker.  */
 	BRIDGE_OPT_RECORD_FILE_APPEND = (1 << 4), /*!< Set if the record file should be appended to between start/stops.  */
-	BRIDGE_OPT_RECORD_FILE_TIMESTAMP = (1 << 5), /*< Set if the record file should have a timestamp appended */
+	BRIDGE_OPT_RECORD_FILE_TIMESTAMP = (1 << 5), /*!< Set if the record file should have a timestamp appended */
+	BRIDGE_OPT_BINAURAL_ACTIVE = (1 << 6), /*!< Set if binaural convolution is activated */
+	BRIDGE_OPT_VIDEO_SRC_SFU = (1 << 7), /*!< Selective forwarding unit */
 };
 
 enum conf_menu_action_id {
@@ -92,6 +97,7 @@ enum conf_menu_action_id {
 	MENU_ACTION_RELEASE_SINGLE_VIDEO_SRC,
 	MENU_ACTION_PARTICIPANT_COUNT,
 	MENU_ACTION_ADMIN_TOGGLE_MUTE_PARTICIPANTS,
+	MENU_ACTION_TOGGLE_BINAURAL,
 };
 
 /*! The conference menu action contains both
@@ -137,9 +143,9 @@ struct user_profile {
 	char announcement[PATH_MAX];
 	unsigned int flags;
 	unsigned int announce_user_count_all_after;
-	/*! The time in ms of talking before a user is considered to be talking by the dsp. */
+	/*! Minimum average magnitude threshold to determine talking by the DSP. */
 	unsigned int talking_threshold;
-	/*! The time in ms of silence before a user is considered to be silent by the dsp. */
+	/*! Time in ms of silence necessary to declare talking stopped by the bridge. */
 	unsigned int silence_threshold;
 	/*! The time in ms the user may stay in the confbridge */
 	unsigned int timeout;
@@ -169,6 +175,8 @@ enum conf_sounds {
 	CONF_SOUND_PARTICIPANTS_MUTED,
 	CONF_SOUND_PARTICIPANTS_UNMUTED,
 	CONF_SOUND_BEGIN,
+	CONF_SOUND_BINAURAL_ON,
+	CONF_SOUND_BINAURAL_OFF,
 };
 
 struct bridge_profile_sounds {
@@ -196,6 +204,8 @@ struct bridge_profile_sounds {
 		AST_STRING_FIELD(participantsmuted);
 		AST_STRING_FIELD(participantsunmuted);
 		AST_STRING_FIELD(begin);
+		AST_STRING_FIELD(binauralon);
+		AST_STRING_FIELD(binauraloff);
 	);
 };
 
@@ -211,6 +221,7 @@ struct bridge_profile {
 	unsigned int mix_interval;  /*!< The internal mixing interval used by the bridge. When set to 0 the bridgewill use a default interval. */
 	struct bridge_profile_sounds *sounds;
 	char regcontext[AST_MAX_CONTEXT];
+	unsigned int video_update_discard; /*!< Amount of time after sending a video update request that subsequent requests should be discarded */
 };
 
 /*! \brief The structure that represents a conference bridge */

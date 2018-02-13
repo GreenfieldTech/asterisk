@@ -45,11 +45,9 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <ctype.h>		/* isalnum() used here */
 #include <math.h>
-#include <sys/ioctl.h>		
+#include <sys/ioctl.h>
 
 #ifdef __linux
 #include <linux/soundcard.h>
@@ -582,7 +580,7 @@ static int oss_digit_begin(struct ast_channel *c, char digit)
 static int oss_digit_end(struct ast_channel *c, char digit, unsigned int duration)
 {
 	/* no better use for received digits than print them */
-	ast_verbose(" << Console Received digit %c of duration %u ms >> \n", 
+	ast_verbose(" << Console Received digit %c of duration %u ms >> \n",
 		digit, duration);
 	return 0;
 }
@@ -727,7 +725,7 @@ static struct ast_frame *oss_read(struct ast_channel *c)
 		return f;
 	/* ok we can build and deliver the frame to the caller */
 	f->frametype = AST_FRAME_VOICE;
-	f->subclass.format = ao2_bump(ast_format_slin);
+	f->subclass.format = ast_format_slin;
 	f->samples = FRAME_SIZE;
 	f->datalen = FRAME_SIZE * 2;
 	f->data.ptr = o->oss_read_buf + AST_FRIENDLY_OFFSET;
@@ -892,7 +890,7 @@ static char *console_cmd(struct ast_cli_entry *e, int cmd, struct ast_cli_args *
 	switch (cmd) {
 	case CLI_INIT:
 		e->command = CONSOLE_VIDEO_CMDS;
-		e->usage = 
+		e->usage =
 			"Usage: " CONSOLE_VIDEO_CMDS "...\n"
 			"       Generic handler for console commands.\n";
 		return NULL;
@@ -1144,7 +1142,7 @@ static char *console_mute(struct ast_cli_entry *e, int cmd, struct ast_cli_args 
 	struct chan_oss_pvt *o = find_desc(oss_active);
 	const char *s;
 	int toggle = 0;
-	
+
 	if (cmd == CLI_INIT) {
 		e->command = "console {mute|unmute} [toggle]";
 		e->usage =
@@ -1294,7 +1292,7 @@ static struct ast_cli_entry cli_oss[] = {
 	AST_CLI_DEFINE(console_flash, "Flash a call on the console"),
 	AST_CLI_DEFINE(console_dial, "Dial an extension on the console"),
 	AST_CLI_DEFINE(console_mute, "Disable/Enable mic input"),
-	AST_CLI_DEFINE(console_transfer, "Transfer a call to a different extension"),	
+	AST_CLI_DEFINE(console_transfer, "Transfer a call to a different extension"),
 	AST_CLI_DEFINE(console_cmd, "Generic console command"),
 	AST_CLI_DEFINE(console_sendtext, "Send text to the remote device"),
 	AST_CLI_DEFINE(console_autoanswer, "Sets/displays autoanswer"),
@@ -1437,14 +1435,39 @@ error:
 #endif
 }
 
+static int unload_module(void)
+{
+	struct chan_oss_pvt *o, *next;
+
+	ast_channel_unregister(&oss_tech);
+	ast_cli_unregister_multiple(cli_oss, ARRAY_LEN(cli_oss));
+
+	o = oss_default.next;
+	while (o) {
+		close(o->sounddev);
+		if (o->owner)
+			ast_softhangup(o->owner, AST_SOFTHANGUP_APPUNLOAD);
+		if (o->owner)
+			return -1;
+		next = o->next;
+		ast_free(o->name);
+		ast_free(o);
+		o = next;
+	}
+	ao2_cleanup(oss_tech.capabilities);
+	oss_tech.capabilities = NULL;
+
+	return 0;
+}
+
 /*!
  * \brief Load the module
  *
  * Module loading including tests for configuration or dependencies.
  * This function can return AST_MODULE_LOAD_FAILURE, AST_MODULE_LOAD_DECLINE,
  * or AST_MODULE_LOAD_SUCCESS. If a dependency or environment variable fails
- * tests return AST_MODULE_LOAD_FAILURE. If the module can not load the 
- * configuration file or other non-critical problem return 
+ * tests return AST_MODULE_LOAD_FAILURE. If the module can not load the
+ * configuration file or other non-critical problem return
  * AST_MODULE_LOAD_DECLINE. On success return AST_MODULE_LOAD_SUCCESS.
  */
 static int load_module(void)
@@ -1474,12 +1497,12 @@ static int load_module(void)
 	if (find_desc(oss_active) == NULL) {
 		ast_log(LOG_NOTICE, "Device %s not found\n", oss_active);
 		/* XXX we could default to 'dsp' perhaps ? */
-		/* XXX should cleanup allocated memory etc. */
-		return AST_MODULE_LOAD_FAILURE;
+		unload_module();
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(oss_tech.capabilities = ast_format_cap_alloc(0))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append(oss_tech.capabilities, ast_format_slin, 0);
 
@@ -1496,31 +1519,4 @@ static int load_module(void)
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
-
-static int unload_module(void)
-{
-	struct chan_oss_pvt *o, *next;
-
-	ast_channel_unregister(&oss_tech);
-	ast_cli_unregister_multiple(cli_oss, ARRAY_LEN(cli_oss));
-
-	o = oss_default.next;
-	while (o) {
-		close(o->sounddev);
-		if (o->owner)
-			ast_softhangup(o->owner, AST_SOFTHANGUP_APPUNLOAD);
-		if (o->owner)
-			return -1;
-		next = o->next;
-		ast_free(o->name);
-		ast_free(o);
-		o = next;
-	}
-	ao2_cleanup(oss_tech.capabilities);
-	oss_tech.capabilities = NULL;
-
-	return 0;
-}
-
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "OSS Console Channel Driver");
-

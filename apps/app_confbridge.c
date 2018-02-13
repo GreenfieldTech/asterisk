@@ -43,8 +43,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -69,6 +67,7 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/test.h"
 #include "asterisk/stasis.h"
 #include "asterisk/stasis_bridges.h"
+#include "asterisk/stasis_channels.h"
 #include "asterisk/json.h"
 #include "asterisk/format_cache.h"
 #include "asterisk/taskprocessor.h"
@@ -228,6 +227,62 @@ ASTERISK_REGISTER_FILE()
 			ConfbridgeListComplete.</para>
 		</description>
 	</manager>
+	<managerEvent language="en_US" name="ConfbridgeList">
+		<managerEventInstance class="EVENT_FLAG_REPORTING">
+			<synopsis>Raised as part of the ConfbridgeList action response list.</synopsis>
+			<syntax>
+				<parameter name="Conference">
+					<para>The name of the Confbridge conference.</para>
+				</parameter>
+				<parameter name="Admin">
+					<para>Identifies this user as an admin user.</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="MarkedUser">
+					<para>Identifies this user as a marked user.</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="WaitMarked">
+					<para>Must this user wait for a marked user to join?</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="EndMarked">
+					<para>Does this user get kicked after the last marked user leaves?</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="Waiting">
+					<para>Is this user waiting for a marked user to join?</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="Muted">
+					<para>The current mute status.</para>
+					<enumlist>
+						<enum name="Yes"/>
+						<enum name="No"/>
+					</enumlist>
+				</parameter>
+				<parameter name="AnsweredTime">
+					<para>The number of seconds the channel has been up.</para>
+				</parameter>
+				<channel_snapshot/>
+			</syntax>
+		</managerEventInstance>
+	</managerEvent>
 	<manager name="ConfbridgeListRooms" language="en_US">
 		<synopsis>
 			List active conferences.
@@ -440,6 +495,10 @@ const char *conf_get_sound(enum conf_sounds sound, struct bridge_profile_sounds 
 		return S_OR(custom_sounds->muted, "conf-muted");
 	case CONF_SOUND_UNMUTED:
 		return S_OR(custom_sounds->unmuted, "conf-unmuted");
+	case CONF_SOUND_BINAURAL_ON:
+		return S_OR(custom_sounds->binauralon, "confbridge-binaural-on");
+	case CONF_SOUND_BINAURAL_OFF:
+		return S_OR(custom_sounds->binauraloff, "confbridge-binaural-off");
 	case CONF_SOUND_ONLY_ONE:
 		return S_OR(custom_sounds->onlyone, "conf-onlyone");
 	case CONF_SOUND_THERE_ARE:
@@ -528,9 +587,9 @@ static void send_join_event(struct confbridge_user *user, struct confbridge_conf
 {
 	struct ast_json *json_object;
 
-	json_object = ast_json_pack("{s: b}",
-		"admin", ast_test_flag(&user->u_profile, USER_OPT_ADMIN)
-	);
+	json_object = ast_json_pack("{s: b, s: b}",
+		"admin", ast_test_flag(&user->u_profile, USER_OPT_ADMIN),
+		"muted", user->muted);
 	if (!json_object) {
 		return;
 	}
@@ -1477,9 +1536,13 @@ static struct confbridge_conference *join_conference_bridge(const char *conferen
 		ast_bridge_set_internal_sample_rate(conference->bridge, conference->b_profile.internal_sample_rate);
 		/* Set the internal mixing interval on the bridge from the bridge profile */
 		ast_bridge_set_mixing_interval(conference->bridge, conference->b_profile.mix_interval);
+		ast_bridge_set_binaural_active(conference->bridge, ast_test_flag(&conference->b_profile, BRIDGE_OPT_BINAURAL_ACTIVE));
 
 		if (ast_test_flag(&conference->b_profile, BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER)) {
 			ast_bridge_set_talker_src_video_mode(conference->bridge);
+		} else if (ast_test_flag(&conference->b_profile, BRIDGE_OPT_VIDEO_SRC_SFU)) {
+			ast_bridge_set_sfu_video_mode(conference->bridge);
+			ast_bridge_set_video_update_discard(conference->bridge, conference->b_profile.video_update_discard);
 		}
 
 		/* Link it into the conference bridges container */
@@ -2140,9 +2203,84 @@ static int conf_rec_name(struct confbridge_user *user, const char *conf_name)
 	}
 
 	if (res == -1) {
+		ast_filedelete(user->name_rec_location, NULL);
 		user->name_rec_location[0] = '\0';
 		return -1;
 	}
+	return 0;
+}
+
+struct async_delete_name_rec_task_data {
+	struct confbridge_conference *conference;
+	char filename[0];
+};
+
+static struct async_delete_name_rec_task_data *async_delete_name_rec_task_data_alloc(
+	struct confbridge_conference *conference, const char *filename)
+{
+	struct async_delete_name_rec_task_data *atd;
+
+	atd = ast_malloc(sizeof(*atd) + strlen(filename) + 1);
+	if (!atd) {
+		return NULL;
+	}
+
+	/* Safe */
+	strcpy(atd->filename, filename);
+	atd->conference = conference;
+
+	return atd;
+}
+
+static void async_delete_name_rec_task_data_destroy(struct async_delete_name_rec_task_data *atd)
+{
+	ast_free(atd);
+}
+
+/*!
+ * \brief Delete user's name file asynchronously
+ *
+ * This runs in the playback queue taskprocessor. This ensures that
+ * sound file is removed after playback is finished and not before.
+ *
+ * \param data An async_delete_name_rec_task_data
+ * \return 0
+ */
+static int async_delete_name_rec_task(void *data)
+{
+	struct async_delete_name_rec_task_data *atd = data;
+
+	ast_filedelete(atd->filename, NULL);
+	ast_log(LOG_DEBUG, "Conference '%s' removed user name file '%s'\n",
+		atd->conference->name, atd->filename);
+
+	async_delete_name_rec_task_data_destroy(atd);
+	return 0;
+}
+
+static int async_delete_name_rec(struct confbridge_conference *conference,
+	const char *filename)
+{
+	struct async_delete_name_rec_task_data *atd;
+
+	if (ast_strlen_zero(filename)) {
+		return 0;
+	} else if (!sound_file_exists(filename)) {
+		return 0;
+	}
+
+	atd = async_delete_name_rec_task_data_alloc(conference, filename);
+	if (!atd) {
+		return -1;
+	}
+
+	if (ast_taskprocessor_push(conference->playback_queue, async_delete_name_rec_task, atd)) {
+		ast_log(LOG_WARNING, "Conference '%s' was unable to remove user name file '%s'\n",
+			conference->name, filename);
+		async_delete_name_rec_task_data_destroy(atd);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -2157,6 +2295,7 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 {
 	int res = 0, volume_adjustments[2];
 	int quiet = 0;
+	int async_delete_task_pushed = 0;
 	char *parse;
 	const char *b_profile_name = NULL;
 	const char *u_profile_name = NULL;
@@ -2244,7 +2383,11 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 	if (!quiet &&
 		(ast_test_flag(&user.u_profile, USER_OPT_ANNOUNCE_JOIN_LEAVE) ||
 		(ast_test_flag(&user.u_profile, USER_OPT_ANNOUNCE_JOIN_LEAVE_REVIEW)))) {
-		conf_rec_name(&user, args.conf_name);
+		if (conf_rec_name(&user, args.conf_name)) {
+			pbx_builtin_setvar_helper(chan, "CONFBRIDGE_RESULT", "FAILED");
+			res = -1; /* Hangup during name recording */
+			goto confbridge_cleanup;
+		}
 	}
 
 	/* menu name */
@@ -2301,20 +2444,11 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 	}
 
 	if (ast_test_flag(&user.u_profile, USER_OPT_JITTERBUFFER)) {
-		char *func_jb;
-		if ((func_jb = ast_module_helper("", "func_jitterbuffer", 0, 0, 0, 0))) {
-			ast_free(func_jb);
-			ast_func_write(chan, "JITTERBUFFER(adaptive)", "default");
-		}
+		ast_func_write(chan, "JITTERBUFFER(adaptive)", "default");
 	}
 
 	if (ast_test_flag(&user.u_profile, USER_OPT_DENOISE)) {
-		char *mod_speex;
-		/* Reduce background noise from each participant */
-		if ((mod_speex = ast_module_helper("", "codec_speex", 0, 0, 0, 0))) {
-			ast_free(mod_speex);
-			ast_func_write(chan, "DENOISE(rx)", "on");
-		}
+		ast_func_write(chan, "DENOISE(rx)", "on");
 	}
 
 	/* if this user has a intro, play it before entering */
@@ -2401,6 +2535,8 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 		async_play_sound_file(conference, user.name_rec_location, NULL);
 		async_play_sound_file(conference,
 			conf_get_sound(CONF_SOUND_HAS_LEFT, conference->b_profile.sounds), NULL);
+		async_delete_name_rec(conference, user.name_rec_location);
+		async_delete_task_pushed = 1;
 	}
 
 	/* play the leave sound */
@@ -2428,11 +2564,10 @@ static int confbridge_exec(struct ast_channel *chan, const char *data)
 		ast_audiohook_volume_set(chan, AST_AUDIOHOOK_DIRECTION_WRITE, volume_adjustments[1]);
 	}
 
-	if (!ast_strlen_zero(user.name_rec_location)) {
+confbridge_cleanup:
+	if (!async_delete_task_pushed && !ast_strlen_zero(user.name_rec_location)) {
 		ast_filedelete(user.name_rec_location, NULL);
 	}
-
-confbridge_cleanup:
 	ast_bridge_features_cleanup(&user.features);
 	conf_bridge_profile_destroy(&user.b_profile);
 	return res;
@@ -2451,6 +2586,20 @@ static int action_toggle_mute(struct confbridge_conference *conference,
 	return play_file(bridge_channel, NULL,
 		conf_get_sound(mute ? CONF_SOUND_MUTED : CONF_SOUND_UNMUTED,
 			conference->b_profile.sounds)) < 0;
+}
+
+static int action_toggle_binaural(struct confbridge_conference *conference,
+		struct confbridge_user *user,
+		struct ast_bridge_channel *bridge_channel)
+{
+	unsigned int binaural;
+	ast_bridge_channel_lock_bridge(bridge_channel);
+	binaural = !bridge_channel->binaural_suspended;
+	bridge_channel->binaural_suspended = binaural;
+	ast_bridge_unlock(bridge_channel->bridge);
+	return play_file(bridge_channel, NULL, (binaural ?
+				conf_get_sound(CONF_SOUND_BINAURAL_OFF, user->b_profile.sounds) :
+				conf_get_sound(CONF_SOUND_BINAURAL_ON, user->b_profile.sounds))) < 0;
 }
 
 static int action_toggle_mute_participants(struct confbridge_conference *conference, struct confbridge_user *user)
@@ -2597,17 +2746,23 @@ static int action_kick_last(struct confbridge_conference *conference,
 	}
 
 	ao2_lock(conference);
-	if (((last_user = AST_LIST_LAST(&conference->active_list)) == user)
-		|| (ast_test_flag(&last_user->u_profile, USER_OPT_ADMIN))) {
+	last_user = AST_LIST_LAST(&conference->active_list);
+	if (!last_user) {
+		ao2_unlock(conference);
+		return 0;
+	}
+
+	if (last_user == user || ast_test_flag(&last_user->u_profile, USER_OPT_ADMIN)) {
 		ao2_unlock(conference);
 		play_file(bridge_channel, NULL,
 			conf_get_sound(CONF_SOUND_ERROR_MENU, conference->b_profile.sounds));
-	} else if (last_user && !last_user->kicked) {
+	} else if (!last_user->kicked) {
 		last_user->kicked = 1;
 		pbx_builtin_setvar_helper(last_user->chan, "CONFBRIDGE_RESULT", "KICKED");
 		ast_bridge_remove(conference->bridge, last_user->chan);
 		ao2_unlock(conference);
 	}
+
 	return 0;
 }
 
@@ -2670,6 +2825,9 @@ static int execute_menu_entry(struct confbridge_conference *conference,
 		switch (menu_action->id) {
 		case MENU_ACTION_TOGGLE_MUTE:
 			res |= action_toggle_mute(conference, user, bridge_channel);
+			break;
+		case MENU_ACTION_TOGGLE_BINAURAL:
+			action_toggle_binaural(conference, user, bridge_channel);
 			break;
 		case MENU_ACTION_ADMIN_TOGGLE_MUTE_PARTICIPANTS:
 			if (!isadmin) {
@@ -2750,7 +2908,9 @@ static int execute_menu_entry(struct confbridge_conference *conference,
 			break;
 		case MENU_ACTION_SET_SINGLE_VIDEO_SRC:
 			ao2_lock(conference);
-			ast_bridge_set_single_src_video_mode(conference->bridge, bridge_channel->chan);
+			if (!ast_test_flag(&conference->b_profile, BRIDGE_OPT_VIDEO_SRC_SFU)) {
+				ast_bridge_set_single_src_video_mode(conference->bridge, bridge_channel->chan);
+			}
 			ao2_unlock(conference);
 			break;
 		case MENU_ACTION_RELEASE_SINGLE_VIDEO_SRC:
@@ -3368,15 +3528,26 @@ static struct ast_custom_function confbridge_info_function = {
 	.read = func_confbridge_info,
 };
 
-static void action_confbridgelist_item(struct mansession *s, const char *id_text, struct confbridge_conference *conference, struct confbridge_user *user, int waiting)
+static int action_confbridgelist_item(struct mansession *s, const char *id_text, struct confbridge_conference *conference, struct confbridge_user *user, int waiting)
 {
+	struct ast_channel_snapshot *snapshot;
+	struct ast_str *snap_str;
+
+	snapshot = ast_channel_snapshot_get_latest(ast_channel_uniqueid(user->chan));
+	if (!snapshot) {
+		return 0;
+	}
+
+	snap_str = ast_manager_build_channel_state_string(snapshot);
+	if (!snap_str) {
+		ao2_ref(snapshot, -1);
+		return 0;
+	}
+
 	astman_append(s,
 		"Event: ConfbridgeList\r\n"
 		"%s"
 		"Conference: %s\r\n"
-		"CallerIDNum: %s\r\n"
-		"CallerIDName: %s\r\n"
-		"Channel: %s\r\n"
 		"Admin: %s\r\n"
 		"MarkedUser: %s\r\n"
 		"WaitMarked: %s\r\n"
@@ -3384,19 +3555,23 @@ static void action_confbridgelist_item(struct mansession *s, const char *id_text
 		"Waiting: %s\r\n"
 		"Muted: %s\r\n"
 		"AnsweredTime: %d\r\n"
+		"%s"
 		"\r\n",
 		id_text,
 		conference->name,
-		S_COR(ast_channel_caller(user->chan)->id.number.valid, ast_channel_caller(user->chan)->id.number.str, "<unknown>"),
-		S_COR(ast_channel_caller(user->chan)->id.name.valid, ast_channel_caller(user->chan)->id.name.str, "<no name>"),
-		ast_channel_name(user->chan),
-		ast_test_flag(&user->u_profile, USER_OPT_ADMIN) ? "Yes" : "No",
-		ast_test_flag(&user->u_profile, USER_OPT_MARKEDUSER) ? "Yes" : "No",
-		ast_test_flag(&user->u_profile, USER_OPT_WAITMARKED) ? "Yes" : "No",
-		ast_test_flag(&user->u_profile, USER_OPT_ENDMARKED) ? "Yes" : "No",
-		waiting ? "Yes" : "No",
-		user->muted ? "Yes" : "No",
-		ast_channel_get_up_time(user->chan));
+		AST_YESNO(ast_test_flag(&user->u_profile, USER_OPT_ADMIN)),
+		AST_YESNO(ast_test_flag(&user->u_profile, USER_OPT_MARKEDUSER)),
+		AST_YESNO(ast_test_flag(&user->u_profile, USER_OPT_WAITMARKED)),
+		AST_YESNO(ast_test_flag(&user->u_profile, USER_OPT_ENDMARKED)),
+		AST_YESNO(waiting),
+		AST_YESNO(user->muted),
+		ast_channel_get_up_time(user->chan),
+		ast_str_buffer(snap_str));
+
+	ast_free(snap_str);
+	ao2_ref(snapshot, -1);
+
+	return 1;
 }
 
 static int action_confbridgelist(struct mansession *s, const struct message *m)
@@ -3430,12 +3605,10 @@ static int action_confbridgelist(struct mansession *s, const struct message *m)
 
 	ao2_lock(conference);
 	AST_LIST_TRAVERSE(&conference->active_list, user, list) {
-		total++;
-		action_confbridgelist_item(s, id_text, conference, user, 0);
+		total += action_confbridgelist_item(s, id_text, conference, user, 0);
 	}
 	AST_LIST_TRAVERSE(&conference->waiting_list, user, list) {
-		total++;
-		action_confbridgelist_item(s, id_text, conference, user, 1);
+		total += action_confbridgelist_item(s, id_text, conference, user, 1);
 	}
 	ao2_unlock(conference);
 	ao2_ref(conference, -1);
@@ -3935,7 +4108,7 @@ static int load_module(void)
 	if (register_channel_tech(conf_record_get_tech())
 		|| register_channel_tech(conf_announce_get_tech())) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	/* Create a container to hold the conference bridges */
@@ -3943,7 +4116,7 @@ static int load_module(void)
 		conference_bridge_hash_cb, conference_bridge_cmp_cb);
 	if (!conference_bridges) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	/* Setup manager stasis subscriptions */
@@ -3968,7 +4141,7 @@ static int load_module(void)
 	res |= ast_manager_register_xml("ConfbridgeSetSingleVideoSrc", EVENT_FLAG_CALL, action_confbridgesetsinglevideosrc);
 	if (res) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;
@@ -3985,4 +4158,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Conference Bridge App
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_DEVSTATE_PROVIDER,
+	.optional_modules = "codec_speex,func_jitterbuffer",
 );

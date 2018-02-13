@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/codec.h"             /* for AST_MEDIA_TYPE_AUDIO */
 #include "asterisk/format.h"            /* for ast_format_get_attribute_data */
 #include "asterisk/frame.h"             /* for ast_frame, etc */
@@ -269,7 +267,7 @@ static int load_module(void)
 
 	if (res) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;

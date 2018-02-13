@@ -135,6 +135,29 @@ void ast_sip_destroy_distributor(void);
 
 /*!
  * \internal
+ * \brief Initialize the transport events notify module
+ * \since 13.18.0
+ *
+ * The transport events notify module is responsible for monitoring
+ * when transports die and calling any registered callbacks when that
+ * happens.  It also manages any PJPROJECT transport state callbacks
+ * registered to it so the callbacks be more dynamic allowing module
+ * loading/unloading.
+ *
+ * \retval -1 Failure
+ * \retval 0 Success
+ */
+int ast_sip_initialize_transport_events(void);
+
+/*!
+ * \internal
+ * \brief Destruct the transport events notify module.
+ * \since 13.18.0
+ */
+void ast_sip_destroy_transport_events(void);
+
+/*!
+ * \internal
  * \brief Initialize global type on a sorcery instance
  *
  * \retval -1 failure
@@ -182,6 +205,14 @@ void ast_sip_destroy_global_headers(void);
  * \retval other on failure
  */
 int ast_res_pjsip_init_options_handling(int reload);
+
+/*!
+ * \internal Initialize message IP updating handling.
+ *
+ * \retval 0 on success
+ * \retval other on failure
+ */
+int ast_res_pjsip_init_message_filter(void);
 
 /*!
  * \internal
@@ -236,6 +267,12 @@ void ast_res_pjsip_cleanup_options_handling(void);
 
 /*!
  * \internal
+ * \brief Clean up res_pjsip message ip updating handling
+ */
+void ast_res_pjsip_cleanup_message_filter(void);
+
+/*!
+ * \internal
  * \brief Get threadpool options
  */
 void sip_get_threadpool_options(struct ast_threadpool_options *threadpool_options);
@@ -277,29 +314,7 @@ int sip_cli_print_global(struct ast_sip_cli_context *context);
  */
 int sip_cli_print_system(struct ast_sip_cli_context *context);
 
-/*!
- * \internal
- * \brief Used by res_pjsip.so to register a service without adding a self reference
- */
-int internal_sip_register_service(pjsip_module *module);
-
-/*!
- * \internal
- * \brief Used by res_pjsip.so to unregister a service without removing a self reference
- */
-int internal_sip_unregister_service(pjsip_module *module);
-
-/*!
- * \internal
- * \brief Used by res_pjsip.so to register an endpoint formatter without adding a self reference
- */
-void internal_sip_register_endpoint_formatter(struct ast_sip_endpoint_formatter *obj);
-
-/*!
- * \internal
- * \brief Used by res_pjsip.so to unregister a endpoint formatter without removing a self reference
- */
-int internal_sip_unregister_endpoint_formatter(struct ast_sip_endpoint_formatter *obj);
+struct ast_sip_session_supplement;
 
 /*!
  * \internal
@@ -331,5 +346,19 @@ int ast_sip_initialize_scheduler(void);
  * \retval 0 success
  */
 int ast_sip_destroy_scheduler(void);
+
+/*!
+ * \internal
+ * \brief Determines if a uri will still be valid after an asterisk restart
+ * \since 13.20.0
+ *
+ * \param uri uri to test
+ * \param endpoint The associated endpoint
+ * \param rdata The rdata to get transport information from
+ *
+ * \retval 1 Yes, 0 No
+ */
+int ast_sip_will_uri_survive_restart(pjsip_sip_uri *uri, struct ast_sip_endpoint *endpoint,
+	pjsip_rx_data *rdata);
 
 #endif /* RES_PJSIP_PRIVATE_H_ */

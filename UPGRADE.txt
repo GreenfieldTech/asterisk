@@ -21,4 +21,25 @@
 === UPGRADE-12.txt  -- Upgrade info for 11 to 12
 === UPGRADE-13.txt  -- Upgrade info for 12 to 13
 === UPGRADE-14.txt  -- Upgrade info for 13 to 14
+=== UPGRADE-15.txt  -- Upgrade info for 14 to 15
 ===========================================================
+
+New in 16.0.0:
+
+app_macro:
+ - The app_macro module is now deprecated and by default it is no longer
+   built.  Users should migrate to app_stack (Gosub).  A warning is logged
+   the first time any Macro is used.
+
+AMI:
+ - The ContactStatus and Status fields for the manager events ContactStatus
+   and ContactStatusDetail are now set to "NonQualified" when a contact exists
+   but has not been qualified.
+
+ARI:
+ - The ContactInfo event's contact_status field is now set to "NonQualified"
+   when a contact exists but has not been qualified.
+
+cdr_syslog:
+ - The cdr_syslog module is now deprecated and by default it is no longer
+   built.

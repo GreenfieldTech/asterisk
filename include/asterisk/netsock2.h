@@ -129,6 +129,22 @@ static inline void ast_sockaddr_setnull(struct ast_sockaddr *addr)
 }
 
 /*!
+ * \brief
+ * Copies the data from a sockaddr to an ast_sockaddr
+ *
+ * \param dst The destination ast_sockaddr
+ * \param src The source sockaddr
+ * \param len Length of the value stored in sockaddr
+ * \retval void
+ */
+static inline void ast_sockaddr_copy_sockaddr(struct ast_sockaddr *dst,
+		struct sockaddr *src, socklen_t len)
+{
+	memcpy(dst, src, len);
+	dst->len = len;
+}
+
+/*!
  * \since 1.8
  *
  * \brief
@@ -373,7 +389,7 @@ int ast_sockaddr_split_hostport(char *str, char **host, char **port, int flags);
  *
  * Host names are NOT allowed.
  *
- * \param[out] addr The resulting ast_sockaddr. This MAY be NULL from 
+ * \param[out] addr The resulting ast_sockaddr. This MAY be NULL from
  * functions that are performing validity checks only, e.g. ast_parse_arg().
  * \param str The string to parse
  * \param flags If set to zero, a port MAY be present. If set to

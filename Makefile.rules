@@ -1,6 +1,6 @@
 #
 # Asterisk -- An open source telephony toolkit.
-# 
+#
 # Makefile rules
 #
 # Copyright (C) 2006-2010, Digium, Inc.
@@ -55,7 +55,7 @@ ifeq ($(NOISY_BUILD),)
     ECHO_PREFIX=@
     CMD_PREFIX=@
 else
-    ECHO_PREFIX=@\# 
+    ECHO_PREFIX=@\#
     CMD_PREFIX=
 endif
 
@@ -184,18 +184,6 @@ ifeq ($(GNU_LD),1)
 endif
 	$(ECHO_PREFIX) echo "   [LDXX] $^ -> $@"
 	$(CMD_PREFIX) $(CXX) $(STATIC_BUILD) -o $@ $(CXX_LDFLAGS_SO) $^ $(CXX_LIBS)
-
-%.eo: %.o
-	$(ECHO_PREFIX) echo "   [EMBED] $< -> $@"
-	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_eo_script $* > .$@.ld
-	$(CMD_PREFIX) $(LD) -r -T .$@.ld -o $@ $<
-	$(CMD_PREFIX) rm -f .$@.ld
-
-%.eo: %.oo
-	$(ECHO_PREFIX) echo "   [EMBED] $< -> $@"
-	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_eo_script $* > .$@.ld
-	$(CMD_PREFIX) $(LD) -r -T .$@.ld -o $@ $<
-	$(CMD_PREFIX) rm -f .$@.ld
 
 %: %.o
 	$(ECHO_PREFIX) echo "   [LD] $^ -> $@"

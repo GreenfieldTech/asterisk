@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <regex.h>
 #include <ctype.h>
 
@@ -69,8 +67,11 @@ ASTERISK_REGISTER_FILE()
 			Gets or sets variables on the master channel
 		</synopsis>
 		<description>
-			<para>Allows access to the channel which created the current channel, if any.  If the channel is already
-			a master channel, then accesses local channel variables.</para>
+			<para>Allows access to the oldest channel associated with the current
+			channel if it still exists.  If the channel is the master channel or
+			the master channel no longer exists then access local channel variables
+			instead.  In other words, the master channel is the channel identified by
+			the channel's linkedid.</para>
 		</description>
 	</function>
 	<function name="CHANNEL" language="en_US">
@@ -234,6 +235,10 @@ ASTERISK_REGISTER_FILE()
 					</enum>
 					<enum name="max_forwards">
 						<para>R/W The maximum number of forwards allowed.</para>
+					</enum>
+					<enum name="callid">
+						<para>R/O Call identifier log tag associated with the channel
+						e.g., <literal>[C-00000000]</literal>.</para>
 					</enum>
 				</enumlist>
 				<xi:include xpointer="xpointer(/docs/info[@name='CHANNEL'])" />
@@ -452,6 +457,16 @@ static int func_channel_read(struct ast_channel *chan, const char *function,
 		ast_channel_lock(chan);
 		snprintf(buf, len, "%d", ast_max_forwards_get(chan));
 		ast_channel_unlock(chan);
+	} else if (!strcasecmp(data, "callid")) {
+		ast_callid callid;
+
+		buf[0] = '\0';
+		ast_channel_lock(chan);
+		callid = ast_channel_callid(chan);
+		if (callid) {
+			ast_callid_strnprint(buf, len, callid);
+		}
+		ast_channel_unlock(chan);
 	} else if (!ast_channel_tech(chan) || !ast_channel_tech(chan)->func_channel_read || ast_channel_tech(chan)->func_channel_read(chan, function, data, buf, len)) {
 		ast_log(LOG_WARNING, "Unknown or unavailable item requested: '%s'\n", data);
 		ret = -1;
@@ -483,18 +498,17 @@ static int func_channel_write_real(struct ast_channel *chan, const char *functio
 			ast_bridge_set_after_go_on(chan, ast_channel_context(chan), ast_channel_exten(chan), ast_channel_priority(chan), value);
 		}
 	} else if (!strcasecmp(data, "amaflags")) {
-		ast_channel_lock(chan);
+		int amaflags;
+
 		if (isdigit(*value)) {
-			int amaflags;
-			sscanf(value, "%30d", &amaflags);
-			ast_channel_amaflags_set(chan, amaflags);
-		} else if (!strcasecmp(value,"OMIT")){
-			ast_channel_amaflags_set(chan, 1);
-		} else if (!strcasecmp(value,"BILLING")){
-			ast_channel_amaflags_set(chan, 2);
-		} else if (!strcasecmp(value,"DOCUMENTATION")){
-			ast_channel_amaflags_set(chan, 3);
+			if (sscanf(value, "%30d", &amaflags) != 1) {
+				amaflags = AST_AMA_NONE;
+			}
+		} else {
+			amaflags = ast_channel_string2amaflag(value);
 		}
+		ast_channel_lock(chan);
+		ast_channel_amaflags_set(chan, amaflags);
 		ast_channel_unlock(chan);
 	} else if (!strcasecmp(data, "peeraccount"))
 		locked_string_field_set(chan, peeraccount, value);

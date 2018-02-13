@@ -41,7 +41,7 @@ static const char *status_map [] = {
 	[UNAVAILABLE] = "Unreachable",
 	[AVAILABLE] = "Reachable",
 	[UNKNOWN] = "Unknown",
-	[CREATED] = "Created",
+	[CREATED] = "NonQualified",
 	[REMOVED] = "Removed",
 };
 
@@ -49,7 +49,7 @@ static const char *short_status_map [] = {
 	[UNAVAILABLE] = "Unavail",
 	[AVAILABLE] = "Avail",
 	[UNKNOWN] = "Unknown",
-	[CREATED] = "Created",
+	[CREATED] = "NonQual",
 	[REMOVED] = "Removed",
 };
 
@@ -205,24 +205,12 @@ static void update_contact_status(const struct ast_sip_contact *contact,
 		return;
 	}
 
-	if (is_contact_refresh
-		&& status->status == CREATED) {
-		/*
-		 * The contact status hasn't been updated since creation
-		 * and we don't want to re-send a created status.
-		 */
-		if (contact->qualify_frequency
-			|| status->rtt_start.tv_sec > 0) {
-			/* Ignore, the status will change soon. */
-			return;
-		}
-
-		/*
-		 * Convert to a regular contact status update
-		 * because the status may never change.
-		 */
-		is_contact_refresh = 0;
-		value = UNKNOWN;
+	/*
+	 * If the current status is CREATED, and it's a refresh or the given value is
+	 * also CREATED then there is nothing to update as nothing needs to change.
+	 */
+	if (status->status == CREATED && (is_contact_refresh || status->status == value)) {
+		return;
 	}
 
 	update = ast_sorcery_alloc(ast_sip_get_sorcery(), CONTACT_STATUS,
@@ -595,7 +583,7 @@ static void qualify_and_schedule(struct ast_sip_contact *contact)
 
 		schedule_qualify(contact, contact->qualify_frequency * 1000);
 	} else {
-		update_contact_status(contact, UNKNOWN, 0);
+		update_contact_status(contact, CREATED, 0);
 	}
 }
 
@@ -701,7 +689,8 @@ static pj_status_t send_options_response(pjsip_rx_data *rdata, int code)
 	pj_status_t status;
 
 	/* Make the response object */
-	if ((status = ast_sip_create_response(rdata, code, NULL, &tdata) != PJ_SUCCESS)) {
+	status = ast_sip_create_response(rdata, code, NULL, &tdata);
+	if (status != PJ_SUCCESS) {
 		ast_log(LOG_ERROR, "Unable to create response (%d)\n", status);
 		return status;
 	}
@@ -940,6 +929,91 @@ static int ami_contact_cb(void *obj, void *arg, int flags)
 	return 0;
 }
 
+static struct ao2_container *get_all_contacts(void)
+{
+	struct ao2_container *contacts;
+
+	contacts = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(), "contact",
+			AST_RETRIEVE_FLAG_MULTIPLE | AST_RETRIEVE_FLAG_ALL, NULL);
+
+	return contacts;
+}
+
+static int sip_contact_to_ami(const struct ast_sip_contact *contact,
+			   struct ast_str **buf)
+{
+	return ast_sip_sorcery_object_to_ami(contact, buf);
+}
+
+static int format_ami_contactlist_handler(void *obj, void *arg, int flags)
+{
+	struct ast_sip_contact *contact = obj;
+	struct ast_sip_ami *ami = arg;
+	struct ast_str *buf;
+	struct ast_sip_contact_status *status;
+
+	buf = ast_sip_create_ami_event("ContactList", ami);
+
+	if (!buf) {
+		return CMP_STOP;
+	}
+
+	if (sip_contact_to_ami(contact, &buf)) {
+		ast_free(buf);
+		return CMP_STOP;
+	}
+
+	/* Add extra info */
+	status = ast_sorcery_retrieve_by_id(
+		ast_sip_get_sorcery(), CONTACT_STATUS,
+		ast_sorcery_object_get_id(contact));
+	ast_str_append(&buf, 0, "Status: %s\r\n",
+			ast_sip_get_contact_status_label(status ? status->status : UNKNOWN));
+	if (!status || status->status == UNKNOWN) {
+		ast_str_append(&buf, 0, "RoundtripUsec: N/A\r\n");
+	} else {
+		ast_str_append(&buf, 0, "RoundtripUsec: %" PRId64 "\r\n", status->rtt);
+	}
+
+	astman_append(ami->s, "%s\r\n", ast_str_buffer(buf));
+
+	ami->count++;
+
+	ast_free(buf);
+
+	return 0;
+}
+
+static int ami_show_contacts(struct mansession *s, const struct message *m)
+{
+	struct ast_sip_ami ami = { .s = s, .m = m, .action_id = astman_get_header(m, "ActionID"), };
+	struct ao2_container *contacts;
+
+	contacts = get_all_contacts();
+	if (!contacts) {
+		astman_send_error(s, m, "Could not get Contacts\n");
+		return 0;
+	}
+
+	if (!ao2_container_count(contacts)) {
+		astman_send_error(s, m, "No Contacts found\n");
+		ao2_ref(contacts, -1);
+		return 0;
+	}
+
+	astman_send_listack(s, m, "A listing of Contacts follows, presented as ContactList events",
+			"start");
+
+	ao2_callback(contacts, OBJ_NODATA, format_ami_contactlist_handler, &ami);
+
+	astman_send_list_complete_start(s, m, "ContactListComplete", ami.count);
+	astman_send_list_complete_end(s);
+
+	ao2_ref(contacts, -1);
+
+	return 0;
+}
+
 static int ami_sip_qualify(struct mansession *s, const struct message *m)
 {
 	const char *endpoint_name = astman_get_header(m, "Endpoint");
@@ -1126,7 +1200,7 @@ static void qualify_and_schedule_contact(struct ast_sip_contact *contact)
 	if (contact->qualify_frequency) {
 		schedule_qualify(contact, initial_interval);
 	} else {
-		update_contact_status(contact, UNKNOWN, 0);
+		update_contact_status(contact, CREATED, 0);
 	}
 }
 
@@ -1146,7 +1220,24 @@ static int qualify_and_schedule_cb_with_aor(void *obj, void *arg, int flags)
 
 static int qualify_and_schedule_cb_without_aor(void *obj, void *arg, int flags)
 {
-	qualify_and_schedule_contact((struct ast_sip_contact *) obj);
+	/*
+	 * These are really dynamic contacts. We need to retrieve the aor associated
+	 * with the contact since it's possible some of the aor's fields were updated
+	 * since last load.
+	 */
+	struct ast_sip_contact *contact = obj;
+	struct ast_sip_aor *aor = ast_sip_location_retrieve_aor(contact->aor);
+
+	if (aor) {
+		qualify_and_schedule_cb_with_aor(obj, aor, flags);
+		ao2_ref(aor, -1);
+	} else {
+		ast_log(LOG_WARNING, "Unable to locate AOR for contact '%s'. Keeping old "
+			"associated settings: frequency=%d, timeout=%f, authenticate=%s\n",
+			contact->uri, contact->qualify_frequency, contact->qualify_timeout,
+			contact->authenticate_qualify ? "yes" : "no");
+		qualify_and_schedule_contact(contact);
+	}
 
 	return 0;
 }
@@ -1174,32 +1265,21 @@ static int qualify_and_schedule_all_cb(void *obj, void *arg, int flags)
 	return 0;
 }
 
-/*!
- * \internal
- * \brief Unschedule all existing contacts
- */
-static int unschedule_all_cb(void *obj, void *arg, int flags)
-{
-	struct sched_data *data = obj;
-
-	AST_SCHED_DEL_UNREF(sched, data->id, ao2_ref(data, -1));
-
-	return CMP_MATCH;
-}
-
 static void qualify_and_schedule_all(void)
 {
-	struct ast_variable *var = ast_variable_new("qualify_frequency >", "0", "");
 	struct ao2_container *aors;
 	struct ao2_container *contacts;
 
-	if (!var) {
-		return;
-	}
-	aors = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(),
-		"aor", AST_RETRIEVE_FLAG_MULTIPLE, var);
+	/*
+	 * It's possible that the AOR had some of it's fields updated prior to a
+	 * reload. For instance qualifying could have been turned on or off by
+	 * setting the qualify_frequency. Due to this we have to iterate through
+	 * all contacts (static and dynamic), and not just ones where the frequency
+	 * is greater than zero, updating any contact fields with the AOR's values.
+	 */
 
-	ao2_callback(sched_qualifies, OBJ_NODATA | OBJ_MULTIPLE | OBJ_UNLINK, unschedule_all_cb, NULL);
+	aors = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(),
+		"aor", AST_RETRIEVE_FLAG_MULTIPLE | AST_RETRIEVE_FLAG_ALL, NULL);
 
 	if (aors) {
 		ao2_callback(aors, OBJ_NODATA, qualify_and_schedule_all_cb, NULL);
@@ -1207,17 +1287,14 @@ static void qualify_and_schedule_all(void)
 	}
 
 	contacts = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(),
-		"contact", AST_RETRIEVE_FLAG_MULTIPLE, var);
+		"contact", AST_RETRIEVE_FLAG_MULTIPLE | AST_RETRIEVE_FLAG_ALL, NULL);
 	if (contacts) {
 		ao2_callback(contacts, OBJ_NODATA, qualify_and_schedule_cb_without_aor, NULL);
 		ao2_ref(contacts, -1);
 	}
-
-	ast_variables_destroy(var);
-
 }
 
-static int format_contact_status(void *obj, void *arg, int flags)
+int ast_sip_format_contact_ami(void *obj, void *arg, int flags)
 {
 	struct ast_sip_contact_wrapper *wrapper = obj;
 	struct ast_sip_contact *contact = wrapper->contact;
@@ -1249,17 +1326,25 @@ static int format_contact_status(void *obj, void *arg, int flags)
 	if (!ast_strlen_zero(contact->call_id)) {
 		ast_str_append(&buf, 0, "CallID: %s\r\n", contact->call_id);
 	}
-	ast_str_append(&buf, 0, "Status: %s\r\n", ast_sip_get_contact_status_label(status->status));
-	if (status->status == UNKNOWN) {
+	ast_str_append(&buf, 0, "Status: %s\r\n", ast_sip_get_contact_status_label(status ? status->status : UNKNOWN));
+	if (!status || status->status == UNKNOWN) {
 		ast_str_append(&buf, 0, "RoundtripUsec: N/A\r\n");
 	} else {
 		ast_str_append(&buf, 0, "RoundtripUsec: %" PRId64 "\r\n", status->rtt);
 	}
 	ast_str_append(&buf, 0, "EndpointName: %s\r\n",
-			ast_sorcery_object_get_id(endpoint));
+			endpoint ? ast_sorcery_object_get_id(endpoint) : S_OR(contact->endpoint_name, ""));
+
+	ast_str_append(&buf, 0, "ID: %s\r\n", ast_sorcery_object_get_id(contact));
+	ast_str_append(&buf, 0, "AuthenticateQualify: %d\r\n", contact->authenticate_qualify);
+	ast_str_append(&buf, 0, "OutboundProxy: %s\r\n", contact->outbound_proxy);
+	ast_str_append(&buf, 0, "Path: %s\r\n", contact->path);
+	ast_str_append(&buf, 0, "QualifyFrequency: %u\r\n", contact->qualify_frequency);
+	ast_str_append(&buf, 0, "QualifyTimeout: %.3f\r\n", contact->qualify_timeout);
+
 	astman_append(ami->s, "%s\r\n", ast_str_buffer(buf));
 	ami->count++;
-	
+
 	ast_free(buf);
 	ao2_cleanup(status);
 	return 0;
@@ -1269,7 +1354,7 @@ static int format_contact_status_for_aor(void *obj, void *arg, int flags)
 {
 	struct ast_sip_aor *aor = obj;
 
-	return ast_sip_for_each_contact(aor, format_contact_status, arg);
+	return ast_sip_for_each_contact(aor, ast_sip_format_contact_ami, arg);
 }
 
 static int format_ami_contact_status(const struct ast_sip_endpoint *endpoint,
@@ -1477,8 +1562,9 @@ int ast_res_pjsip_init_options_handling(int reload)
 		return -1;
 	}
 
-	internal_sip_register_endpoint_formatter(&contact_status_formatter);
+	ast_sip_register_endpoint_formatter(&contact_status_formatter);
 	ast_manager_register_xml("PJSIPQualify", EVENT_FLAG_SYSTEM | EVENT_FLAG_REPORTING, ami_sip_qualify);
+	ast_manager_register_xml("PJSIPShowContacts", EVENT_FLAG_SYSTEM, ami_show_contacts);
 	ast_cli_register_multiple(cli_options, ARRAY_LEN(cli_options));
 
 	update_all_unqualified_endpoints();
@@ -1491,7 +1577,8 @@ void ast_res_pjsip_cleanup_options_handling(void)
 {
 	ast_cli_unregister_multiple(cli_options, ARRAY_LEN(cli_options));
 	ast_manager_unregister("PJSIPQualify");
-	internal_sip_unregister_endpoint_formatter(&contact_status_formatter);
+	ast_manager_unregister("PJSIPShowContacts");
+	ast_sip_unregister_endpoint_formatter(&contact_status_formatter);
 
 	ast_sorcery_observer_remove(ast_sip_get_sorcery(), "aor", &observer_callbacks_options);
 	pjsip_endpt_unregister_module(ast_sip_get_pjsip_endpoint(), &options_module);

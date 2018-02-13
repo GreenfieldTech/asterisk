@@ -23,7 +23,7 @@
  *
  * \author Mark Spencer <markster@digium.com>
  * \author Russell Bryant <russelb@clemson.edu>
- * 
+ *
  * \ingroup applications
  */
 
@@ -32,8 +32,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <sys/stat.h>
 
@@ -499,4 +497,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "Interface Test Application");
-

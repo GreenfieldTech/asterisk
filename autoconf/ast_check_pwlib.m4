@@ -103,7 +103,7 @@ if test "${HAS_PWLIB:-unset}" = "unset" ; then
     else
       AC_CHECK_HEADER(/usr/local/include/ptlib.h, HAS_PWLIB=1, )
       if test "${HAS_PWLIB:-unset}" != "unset" ; then
-        AC_PATH_PROG(PTLIB_CONFIG, ptlib-config, , /usr/local/bin$PATH_SEPARATOR/usr/local/share/pwlib/make)
+        AC_PATH_PROG(PTLIB_CONFIG, ptlib-config, , /usr/local/bin$PATH_SEPARATOR/usr/local/share/ptlib/make$PATH_SEPARATOR/usr/local/share/pwlib/make)
         PWLIB_INCDIR="/usr/local/include"
         PWLIB_LIBDIR=`${PTLIB_CONFIG} --pwlibdir 2>/dev/null`
         if test "${PWLIB_LIBDIR:-unset}" = "unset"; then
@@ -121,7 +121,7 @@ if test "${HAS_PWLIB:-unset}" = "unset" ; then
       else
         AC_CHECK_HEADER(/usr/include/ptlib.h, HAS_PWLIB=1, )
         if test "${HAS_PWLIB:-unset}" != "unset" ; then
-          AC_PATH_PROG(PTLIB_CONFIG, ptlib-config, , /usr/bin$PATH_SEPARATOR/usr/share/pwlib/make)
+          AC_PATH_PROG(PTLIB_CONFIG, ptlib-config, , /usr/bin$PATH_SEPARATOR/usr/share/ptlib/make$PATH_SEPARATOR/usr/share/pwlib/make)
           PWLIB_INCDIR="/usr/include"
           PWLIB_LIBDIR=`${PTLIB_CONFIG} --pwlibdir 2>/dev/null`
           if test "${PWLIB_LIBDIR:-unset}" = "unset"; then
@@ -191,11 +191,7 @@ fi
 ])
 
 AC_DEFUN([AST_CHECK_PWLIB_VERSION], [
-	if test "x$7" != "x"; then
-	   	VNAME="$7"
-       	else
-	   	VNAME="$2_VERSION"
-	fi
+	VNAME="m4_default([$7],[$2_VERSION])"
 
 	if test "${HAS_$2:-unset}" != "unset"; then
 		$2_VERSION=`grep "$VNAME \"" ${$2_INCDIR}/$3 | sed -e 's/[[[:space:]]]\{1,\}/ /g' | cut -f3 -d ' ' | sed -e 's/"//g'`
@@ -204,11 +200,7 @@ AC_DEFUN([AST_CHECK_PWLIB_VERSION], [
 		$2_BUILD_NUMBER=`echo ${$2_VERSION} | cut -f3 -d.`
 		$2_VER=$((${$2_MAJOR_VERSION}*10000+${$2_MINOR_VERSION}*100+${$2_BUILD_NUMBER}))
 		$2_REQ=$(($4*10000+$5*100+$6))
-		if test "x$10" = "x"; then
-			$2_MAX=9999999
-		else
-			$2_MAX=$(($8*10000+$9*100+$10))
-		fi
+		$2_MAX=m4_ifval([$10], [$(($8*10000+$9*100+$10))], [9999999])
 
 		AC_MSG_CHECKING(if $1 version ${$2_VERSION} is compatible with chan_h323)
 		if test ${$2_VER} -lt ${$2_REQ}; then
@@ -242,11 +234,11 @@ AC_DEFUN([AST_CHECK_PWLIB_BUILD], [
 
 	   AC_LINK_IFELSE(
 		[AC_LANG_PROGRAM([$4],[$5])],
-		[	AC_MSG_RESULT(yes) 
-			ac_cv_lib_$2="yes" 
+		[	AC_MSG_RESULT(yes)
+			ac_cv_lib_$2="yes"
 		],
-		[	AC_MSG_RESULT(no) 
-			ac_cv_lib_$2="no" 
+		[	AC_MSG_RESULT(no)
+			ac_cv_lib_$2="no"
 		]
 		)
 
